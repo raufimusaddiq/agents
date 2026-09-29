@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+*.log
+
+# Agent Board runtime state (never commit secrets or live state)
+state/
+audit.jsonl
+roster.json
+secrets.json
+config.local.json
+.playwright/
+test-results/

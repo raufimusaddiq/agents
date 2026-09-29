@@ -1,0 +1,52 @@
+{
+  "herdr_session": "default",
+  "port": 8792,
+  "bind": "127.0.0.1",
+  "remote": {
+    "mode": "none",
+    "hostnames": [],
+    "company_managed": false
+  },
+  "notifications": {
+    "webhook": {
+      "kind": "telegram",
+      "bot_token": "",
+      "chat_id": ""
+    },
+    "rate_limit_seconds": 60
+  },
+  "docs_repo": {
+    "url": "https://github.com/raufimusaddiq/agents",
+    "local_path": null
+  },
+  "project_roots": [],
+  "pr_title_pattern": "^[A-Z][A-Z0-9]+-\\d+ - .+ - .+ - \\d+$",
+  "auth": {
+    "password_hash": "scrypt$16384$c051a0f161ebc2a2735914bd8998d51b$d31155c4d8e1c323ac2ff70b6d964fdca3b44ae3820eade0c346897063ca3873",
+    "session_hours": 12,
+    "lockout_attempts": 10,
+    "lockout_minutes": 15
+  },
+  "roster": {
+    "max_closed": 30,
+    "closed_ttl_hours": 24,
+    "save_seconds": 60
+  },
+  "workflow": {
+    "recompute_seconds": 10,
+    "git_reread_seconds": 60,
+    "allowed_key_names": [
+      "enter",
+      "backspace",
+      "tab",
+      "shift+tab",
+      "up",
+      "down",
+      "left",
+      "right",
+      "esc",
+      "space",
+      "ctrl+"
+    ]
+  }
+}
