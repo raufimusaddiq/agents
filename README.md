@@ -26,6 +26,33 @@ ssh -L 8792:127.0.0.1:8792 <server>
 
 `install.sh` asks about remote access after it sets everything up (see below).
 
+## Harness-native input: `/`, `@`, `$`
+
+The chat composer does not fake autocomplete. Each harness owns its input buffer
+and its own completion menu, so the board mirrors what you type into the agent
+with `herdr pane send-text` (no Enter) and reads the agent's real menu back:
+
+| trigger | what it opens | Claude | Codex | opencode |
+| --- | --- | --- | --- | --- |
+| `/` | slash commands | yes | yes | yes |
+| `@` | files / mentions / agents | yes | yes | agents |
+| `$` | shell or skill/app picker | — | yes | — |
+
+Picking a completion replaces the typed token and mirrors the edit. "Send" only
+presses Enter, because the text is already in the agent's composer. This means
+the menus are exactly the ones the CLI would show, including fuzzy filtering and
+any harness-specific behavior.
+
+## Workspaces and agents
+
+A herdr **workspace holds one or more tabs; each tab is one agent**. Hiring
+therefore either:
+
+- creates a **new workspace** named by you, with this agent as its first tab, or
+- adds a **tab** to an existing workspace, so several agents share one workspace.
+
+The Hire dialog lists existing workspaces with their tab and agent counts.
+
 ## Design
 
 The board is a **retro-cartoon mission control**: a status cockpit, not a

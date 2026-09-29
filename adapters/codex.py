@@ -25,7 +25,7 @@ import os
 import re
 import sqlite3
 
-from .base import Adapter, Ask, Event, Option, ScreenFallbackMixin, Step
+from .base import Adapter, Ask, Event, MenuItem, Option, ScreenFallbackMixin, Step
 
 CODEX_DIR = os.path.expanduser("~/.codex")
 STATE_DB = os.path.join(CODEX_DIR, "state_5.sqlite")
@@ -146,6 +146,55 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
         # MEASURED: keep the interface identical across harnesses; the
         # server prefix-selects the harness binary.
         return ["resume", session_id]
+
+    def parse_menu(self, screen_lines: list[str]) -> list[MenuItem]:
+        """Measured 0.159.0 composer menus:
+        `/` → '› /model   choose what model…' then '  /fast   2x speed…'
+        `@` → '› GitHub   Triage PRs…   Plugin'
+        `$` → '› Analytics Dashboard  [Skill] Create spreadsheets…' (also plain
+              'Business Review  [Skill] …')
+        The selected row carries '›'. Rows are label + two-plus spaces + detail,
+        optionally with a trailing capability tag (Plugin/App/Skill) or a
+        bracketed [Skill]/[App] prefix inside the detail."""
+        items: list[MenuItem] = []
+        for ln in screen_lines:
+            m = re.match(r"^\s*(›)?\s*(\S.*?)\s{2,}(\S.*)$", ln)
+            if not m:
+                continue
+            label = m.group(2).strip()
+            detail = m.group(3).strip()
+            # Footer/status rows are not menu items.
+            if label.lower().startswith(("enter/", "enter ", "esc ", "↑", "↓",
+                                         "type to search")):
+                continue
+            if label.startswith("/"):
+                trigger = "/"
+            elif label.startswith("$"):
+                trigger = "$"
+            elif label.startswith("@"):
+                trigger = "@"
+            elif re.match(r"^[A-Za-z0-9].+", label) and re.search(
+                    r"\b(Plugin|App|Skill|MCP)\b|\[(Skill|App|Plugin)\]",
+                    detail):
+                # `@`/`$` pickers list bare names with a capability tag.
+                trigger = "@" if "Plugin" in detail or "App" in detail else "$"
+            else:
+                continue
+            kind = ""
+            km = re.search(r"\[(Skill|App|Plugin)\]", detail)
+            if km:
+                kind = km.group(1).lower()
+            elif detail.endswith("Plugin"):
+                kind = "plugin"
+                detail = detail[: -len("Plugin")].strip()
+            elif detail.endswith("App"):
+                kind = "app"
+                detail = detail[: -len("App")].strip()
+            label = re.sub(r"\[(Skill|App|Plugin)\]\s*", "", label).strip()
+            items.append(MenuItem(trigger=trigger, label=label,
+                                  detail=detail, kind=kind,
+                                  selected=bool(m.group(1))))
+        return items
 
     def status_line(self, screen_lines: list[str]) -> dict:
         # MEASURED: Codex prints "tokens used" and a NNNN number, no percentages.

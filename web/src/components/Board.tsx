@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Modal,
   ScrollArea,
@@ -6,10 +6,110 @@ import {
   Stack,
   TextInput,
 } from "@mantine/core";
-import type { Board, Card as CardT, Worktree } from "../types";
+import type { Board, Card as CardT, FolderListing, Worktree } from "../types";
 import { api } from "../api";
 import { CardView } from "./CardView";
 import { useFlip } from "../flip";
+
+function FolderPicker({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (path: string) => void;
+}) {
+  const [listing, setListing] = useState<FolderListing | null>(null);
+  const [open, setOpen] = useState(false);
+
+  async function browse(path: string) {
+    try {
+      const r = await api.folders(path);
+      setListing(r);
+      setOpen(true);
+    } catch {
+      setListing(null);
+    }
+  }
+
+  return (
+    <div className="folder-picker">
+      <label className="folder-label" htmlFor="hire-folder">
+        Folder (under $HOME)
+      </label>
+      <div className="folder-row">
+        <input
+          id="hire-folder"
+          className="folder-input"
+          value={value}
+          onChange={(e) => onChange(e.currentTarget.value)}
+          aria-label="hire folder"
+        />
+        <button
+          type="button"
+          className="ab-btn board-mini"
+          aria-label="browse folders"
+          onClick={() => browse(value || "~")}
+        >
+          Browse
+        </button>
+      </div>
+      {open && listing && (
+        <div className="folder-browser">
+          <div className="folder-cur mono" title={listing.path}>
+            {listing.path}
+          </div>
+          <ScrollArea h={180}>
+            <ul className="folder-list">
+              {listing.parent && (
+                <li>
+                  <button
+                    type="button"
+                    className="folder-item is-up"
+                    onClick={() => browse(listing.parent!)}
+                  >
+                    ↑ ..
+                  </button>
+                </li>
+              )}
+              {listing.dirs.map((d) => (
+                <li key={d.path}>
+                  <button
+                    type="button"
+                    className="folder-item"
+                    onClick={() => {
+                      onChange(d.path);
+                      if (d.has_children && listing.can_descend) {
+                        browse(d.path);
+                      } else {
+                        setOpen(false);
+                      }
+                    }}
+                    aria-label={`select ${d.name}`}
+                  >
+                    <span className="folder-name">{d.name}</span>
+                    {d.has_children && listing.can_descend && (
+                      <span className="folder-enter">›</span>
+                    )}
+                  </button>
+                </li>
+              ))}
+              {listing.dirs.length === 0 && (
+                <li className="panel-empty">No subfolders here.</li>
+              )}
+            </ul>
+          </ScrollArea>
+          <button
+            type="button"
+            className="ab-btn board-mini folder-use"
+            onClick={() => setOpen(false)}
+          >
+            Use this folder
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function HireModal({
   opened,
@@ -24,17 +124,36 @@ function HireModal({
 }) {
   const [kind, setKind] = useState("claude");
   const [workspace, setWorkspace] = useState("new");
+  const [workspaceLabel, setWorkspaceLabel] = useState("");
+  const [workspaces, setWorkspaces] = useState<
+    { id: string; label: string; tabs: number; agents: string[] }[]
+  >([]);
   const [folder, setFolder] = useState("~");
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    if (!opened) return;
+    api
+      .workspaces()
+      .then((r) => setWorkspaces(r.workspaces))
+      .catch(() => setWorkspaces([]));
+  }, [opened]);
+
   async function submit() {
     setBusy(true);
     setError("");
     try {
-      await api.hire({ kind, workspace, folder, name, message });
+      await api.hire({
+        kind,
+        workspace,
+        workspace_label: workspaceLabel,
+        folder,
+        name,
+        message,
+      });
       onDone();
       onClose();
     } catch (e) {
@@ -43,6 +162,15 @@ function HireModal({
       setBusy(false);
     }
   }
+
+  const sameWorkspace = workspaces.find((w) => w.id === workspace);
+  const workspaceData = [
+    { value: "new", label: "New workspace" },
+    ...workspaces.map((w) => ({
+      value: w.id,
+      label: `${w.label || w.id} · ${w.tabs} tab${w.tabs === 1 ? "" : "s"}`,
+    })),
+  ];
 
   return (
     <Modal
@@ -61,16 +189,32 @@ function HireModal({
         />
         <Select
           label="Workspace"
-          data={["new", "existing"]}
+          description="A workspace holds one or more agents, one per tab."
+          data={workspaceData}
           value={workspace}
           onChange={(v) => setWorkspace(v || "new")}
           allowDeselect={false}
         />
-        <TextInput
-          label="Folder (under $HOME)"
+        {workspace === "new" ? (
+          <TextInput
+            label="Workspace name"
+            placeholder="e.g. acme-checkout"
+            value={workspaceLabel}
+            onChange={(e) => setWorkspaceLabel(e.currentTarget.value)}
+            aria-label="workspace name"
+          />
+        ) : (
+          <p className="panel-note">
+            Adds a tab to{" "}
+            <strong>{sameWorkspace?.label || workspace}</strong>
+            {sameWorkspace && sameWorkspace.agents.length > 0
+              ? ` — already there: ${sameWorkspace.agents.join(", ")}`
+              : ""}
+          </p>
+        )}
+        <FolderPicker
           value={preset?.folder ?? folder}
-          onChange={(e) => setFolder(e.currentTarget.value)}
-          aria-label="hire folder"
+          onChange={setFolder}
         />
         <TextInput
           label="Name (1-40 chars)"

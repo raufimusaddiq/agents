@@ -1113,3 +1113,164 @@ body {
   width: 100%;
   justify-content: center;
 }
+
+/* -------------------------------------------------------- terminal */
+
+.terminal-title {
+  font-size: 16px;
+}
+
+.terminal-host {
+  width: 100%;
+  height: calc(100vh - 140px);
+  background: #101014;
+  border: 2px solid var(--ab-border);
+  padding: 6px 4px 0;
+  overflow: hidden;
+}
+
+.terminal-host .xterm {
+  height: 100%;
+}
+
+.terminal-host .xterm-viewport {
+  background: #101014 !important;
+}
+
+/* -------------------------------------------------------- completions */
+
+.composer-wrap {
+  margin-top: 10px;
+}
+
+.menu {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  border: 2px solid var(--ab-border);
+  box-shadow: var(--ab-shadow-sm);
+  background: var(--ab-card);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.menu-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 9px;
+  border: none;
+  border-bottom: 1px solid var(--ab-rivet);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.menu-row:hover,
+.menu-row:focus-visible {
+  background: var(--ab-answer);
+}
+
+.menu-label {
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.menu-detail {
+  font-size: 12px;
+  color: var(--ab-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.menu-kind {
+  margin-left: auto;
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1.5px solid var(--ab-border);
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------------ folder picker */
+
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.folder-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.folder-row {
+  display: flex;
+  gap: 6px;
+}
+
+.folder-input {
+  flex: 1;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  padding: 6px 9px;
+  border: 2px solid var(--ab-border);
+  background: var(--ab-card);
+  color: var(--ab-ink);
+}
+
+.folder-browser {
+  border: 2px solid var(--ab-border);
+  background: var(--ab-panel);
+  padding: 8px;
+}
+
+.folder-cur {
+  font-size: 11px;
+  color: var(--ab-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 5px;
+}
+
+.folder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.folder-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  padding: 4px 7px;
+  border: 1.5px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.folder-item:hover {
+  border-color: var(--ab-border);
+}
+
+.folder-name {
+  font-size: 13px;
+}
+
+.folder-enter {
+  color: var(--ab-dim);
+}
+
+.folder-use {
+  margin-top: 6px;
+}

@@ -20,9 +20,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 
-from .base import Adapter, Ask, Event, Option, ScreenFallbackMixin, Step
+from .base import Adapter, Ask, Event, MenuItem, Option, ScreenFallbackMixin, Step
 
 DB_PATH = os.path.expanduser("~/.local/share/opencode/opencode.db")
 
@@ -94,6 +95,33 @@ class OpencodeAdapter(ScreenFallbackMixin, Adapter):
 
     def resume_args(self, session_id: str) -> list[str]:
         return ["--session", session_id]
+
+    def parse_menu(self, screen_lines: list[str]) -> list[MenuItem]:
+        """Measured 1.18.33 composer menus:
+        `/` → '/agents       Switch agent' then '/compact   Compact session'
+        `@` → '@explore' / '@general' (bare agent names)
+        Rows live inside a box drawn with '┃'; the trigger query itself is a
+        row like ' / ' and must not be treated as a menu item."""
+        items: list[MenuItem] = []
+        for ln in screen_lines:
+            s = ln.replace("┃", "").strip()
+            if not s:
+                continue
+            m = re.match(r"^(/[A-Za-z0-9_-]+)\s{2,}(.+)$", s)
+            if m:
+                items.append(MenuItem(trigger="/", label=m.group(1),
+                                      detail=m.group(2).strip()))
+                continue
+            m2 = re.match(r"^(@[A-Za-z0-9_-]+)\s*$", s)
+            if m2:
+                items.append(MenuItem(trigger="@", label=m2.group(1),
+                                      kind="agent"))
+                continue
+            m3 = re.match(r"^(@[A-Za-z0-9_-]+)\s{2,}(.+)$", s)
+            if m3:
+                items.append(MenuItem(trigger="@", label=m3.group(1),
+                                      detail=m3.group(2).strip()))
+        return items
 
     def status_line(self, screen_lines: list[str]) -> dict:
         # MEASURED: opencode TUI shows a model + token summary but no ctx %

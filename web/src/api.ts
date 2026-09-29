@@ -1,4 +1,4 @@
-import type { Agent, Board } from "./types";
+import type { Agent, Board, MenuItem } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -49,6 +49,33 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pane }),
     }),
+  type: (pane: string, text: string) =>
+    req<{ ok: boolean }>("/api/type", {
+      method: "POST",
+      body: JSON.stringify({ pane, text }),
+    }),
+  menu: (pane: string) =>
+    req<{ items: MenuItem[]; kind: string }>("/api/menu", {
+      method: "POST",
+      body: JSON.stringify({ pane }),
+    }),
+  folders: (path: string) =>
+    req<{
+      path: string;
+      home: string;
+      parent: string | null;
+      can_descend: boolean;
+      dirs: { name: string; path: string; has_children: boolean }[];
+    }>(`/api/folders?path=${encodeURIComponent(path)}`),
+  workspaces: () =>
+    req<{
+      workspaces: {
+        id: string;
+        label: string;
+        tabs: number;
+        agents: string[];
+      }[];
+    }>("/api/workspaces"),
   hire: (body: Record<string, string>) =>
     req<{ ok: boolean }>("/api/hire", {
       method: "POST",

@@ -1054,6 +1054,243 @@ def _board_url() -> str:
 
 
 # --------------------------------------------------------------------------
+# browser terminal: full herdr TUI over a WebSocket + pty
+# --------------------------------------------------------------------------
+
+import base64 as _b64  # noqa: E402
+import fcntl as _fcntl  # noqa: E402
+import hashlib as _hashlib  # noqa: E402
+import pty as _pty  # noqa: E402
+import select as _select  # noqa: E402
+import struct as _struct  # noqa: E402
+import termios as _termios  # noqa: E402
+
+# RFC 6455 opcodes
+_WS_TEXT = 0x1
+_WS_BINARY = 0x2
+_WS_CLOSE = 0x8
+_WS_PING = 0x9
+_WS_PONG = 0xA
+_WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def _ws_accept(key: str) -> str:
+    return _b64.b64encode(
+        _hashlib.sha1((key + _WS_GUID).encode()).digest()).decode()
+
+
+def _ws_send(sock, payload: bytes, opcode: int = _WS_BINARY) -> None:
+    """Server->client frame (unmasked)."""
+    header = bytearray()
+    header.append(0x80 | opcode)
+    n = len(payload)
+    if n < 126:
+        header.append(n)
+    elif n < 65536:
+        header.append(126)
+        header += _struct.pack("!H", n)
+    else:
+        header.append(127)
+        header += _struct.pack("!Q", n)
+    sock.sendall(bytes(header) + payload)
+
+
+def _ws_recv(sock) -> tuple[int, bytes] | None:
+    """Client->server frame (masked). Returns (opcode, payload) or None."""
+    def readn(n):
+        buf = b""
+        while len(buf) < n:
+            chunk = sock.recv(n - len(buf))
+            if not chunk:
+                raise ConnectionError("closed")
+            buf += chunk
+        return buf
+
+    try:
+        b0, b1 = readn(2)
+    except (ConnectionError, OSError):
+        return None
+    opcode = b0 & 0x0F
+    masked = b1 & 0x80
+    length = b1 & 0x7F
+    if length == 126:
+        length = _struct.unpack("!H", readn(2))[0]
+    elif length == 127:
+        length = _struct.unpack("!Q", readn(8))[0]
+    mask = readn(4) if masked else b"\x00\x00\x00\x00"
+    payload = readn(length) if length else b""
+    if masked:
+        payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
+    return opcode, payload
+
+
+class TerminalSession:
+    """One browser terminal: a fresh herdr TUI client in a pty, bridged over WS.
+
+    Measured: spawn a new `herdr --session <name>` client with every HERDR_*
+    variable removed (otherwise it believes it is nested). Closing sends SIGHUP
+    to the client, which only detaches: the server and its agents keep running.
+    """
+
+    def __init__(self, sock, pane: str, cols: int, rows: int):
+        self.sock = sock
+        self.pane = pane
+        self.cols = max(20, min(cols, 400))
+        self.rows = max(5, min(rows, 200))
+        self.pid = -1
+        self.fd = -1
+        self._stop = threading.Event()
+        self._sender = None
+
+    def _env(self) -> dict:
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith("HERDR_")}
+        env["TERM"] = "xterm-256color"
+        env["COLORTERM"] = "truecolor"
+        env.setdefault("PATH", os.environ.get("PATH", ""))
+        return env
+
+    def _spawn(self) -> None:
+        cfg = config()
+        argv = ["herdr", "--session", cfg["herdr_session"]]
+        if self.pane and valid_pane(self.pane):
+            # focus the requested pane before the client draws, so the TUI
+            # opens on the agent the user clicked. Best-effort.
+            try:
+                herdr("pane", "focus", self.pane, timeout=8)
+            except HerdrError:
+                pass
+        self.pid, self.fd = _pty.fork()
+        if self.pid == 0:
+            try:
+                os.execvpe(argv[0], argv, self._env())
+            except OSError:
+                os._exit(127)
+        _fcntl.ioctl(self.fd, _termios.TIOCSWINSZ,
+                     _struct.pack("HHHH", self.rows, self.cols, 0, 0))
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.cols = max(20, min(cols, 400))
+        self.rows = max(5, min(rows, 200))
+        if self.fd >= 0:
+            try:
+                _fcntl.ioctl(self.fd, _termios.TIOCSWINSZ,
+                             _struct.pack("HHHH", self.rows, self.cols, 0, 0))
+            except OSError:
+                pass
+
+    def _pty_to_ws(self) -> None:
+        while not self._stop.is_set():
+            try:
+                r, _, _ = _select.select([self.fd], [], [], 0.5)
+            except (OSError, ValueError):
+                break
+            if not r:
+                continue
+            try:
+                data = os.read(self.fd, 65536)
+            except OSError:
+                break
+            if not data:
+                break
+            try:
+                _ws_send(self.sock, data, _WS_BINARY)
+            except OSError:
+                break
+        self._stop.set()
+
+    def run(self) -> None:
+        try:
+            self._spawn()
+        except (OSError, ValueError):
+            return
+        t = threading.Thread(target=self._pty_to_ws, daemon=True)
+        t.start()
+        try:
+            while not self._stop.is_set():
+                frame = _ws_recv(self.sock)
+                if frame is None:
+                    break
+                opcode, payload = frame
+                if opcode == _WS_CLOSE:
+                    break
+                if opcode == _WS_PING:
+                    _ws_send(self.sock, payload, _WS_PONG)
+                    continue
+                if opcode in (_WS_TEXT, _WS_BINARY):
+                    # Control messages: a small JSON prelude drives resize.
+                    if payload[:1] == b"{":
+                        try:
+                            msg = json.loads(payload)
+                        except ValueError:
+                            msg = {}
+                        if msg.get("type") == "resize":
+                            self.resize(int(msg.get("cols", self.cols)),
+                                        int(msg.get("rows", self.rows)))
+                            continue
+                    try:
+                        os.write(self.fd, payload)
+                    except OSError:
+                        break
+        finally:
+            self._stop.set()
+            # SIGHUP only detaches the herdr client; the server keeps running.
+            if self.pid > 0:
+                try:
+                    os.kill(self.pid, signal.SIGHUP)
+                except OSError:
+                    pass
+            if self.fd >= 0:
+                try:
+                    os.close(self.fd)
+                except OSError:
+                    pass
+            try:
+                _ws_send(self.sock, b"", _WS_CLOSE)
+            except OSError:
+                pass
+
+
+def serve_terminal(handler) -> None:
+    """Upgrade an HTTP request to a WebSocket terminal session."""
+    headers = handler.headers
+    key = headers.get("Sec-WebSocket-Key")
+    if not key or "websocket" not in (headers.get("Upgrade", "").lower()):
+        handler._json(400, {"error": "expected_websocket"})
+        return
+    host = handler._host()
+    origin = headers.get("Origin")
+    if not origin_allowed(host, origin):
+        handler._json(403, {"error": "forbidden"})
+        return
+    user = handler._auth()
+    if not user:
+        handler._json(403, {"error": "forbidden"})
+        return
+    q = urllib.parse.urlparse(handler.path).query
+    params = urllib.parse.parse_qs(q)
+    pane = params.get("pane", [""])[0]
+    cols = int(params.get("cols", ["80"])[0] or 80)
+    rows = int(params.get("rows", ["24"])[0] or 24)
+    if not valid_pane(pane):
+        handler._json(400, {"error": "bad_pane"})
+        return
+
+    handler.send_response(101, "Switching Protocols")
+    handler.send_header("Upgrade", "websocket")
+    handler.send_header("Connection", "Upgrade")
+    handler.send_header("Sec-WebSocket-Accept", _ws_accept(key))
+    handler.end_headers()
+    sock = handler.connection
+    audit(user, "terminal_open", pane, extra={"cols": cols, "rows": rows})
+    try:
+        TerminalSession(sock, pane, cols, rows).run()
+    finally:
+        audit(user, "terminal_close", pane)
+        handler.close_connection = True
+
+
+# --------------------------------------------------------------------------
 # HTTP handler
 # --------------------------------------------------------------------------
 
@@ -1126,10 +1363,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/healthz":
             self._json(200, {"ok": True})
             return
+        if path == "/ws/terminal":
+            serve_terminal(self)
+            return
         if path in ("/", "/index.html"):
             self._serve_static("index.html")
             return
-        if path.startswith("/assets/"):
+        if path.startswith("/assets/") or path.startswith("/fonts/"):
             self._serve_static(path.lstrip("/"))
             return
         if path == "/api/capabilities":
@@ -1175,6 +1415,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._deny()
             self._json(200, settings_public())
             return
+        if path == "/api/folders":
+            if not self._auth():
+                return self._deny()
+            q = urllib.parse.parse_qs(p.query).get("path", [""])[0]
+            self._json(200, list_folders(q))
+            return
+        if path == "/api/workspaces":
+            if not self._auth():
+                return self._deny()
+            self._json(200, {"workspaces": list_workspaces()})
+            return
         self._json(404, {"error": "not_found"})
 
     def do_POST(self):
@@ -1216,6 +1467,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/keys":
             self._keys()
+            return
+        if path == "/api/type":
+            self._type()
+            return
+        if path == "/api/menu":
+            self._menu()
             return
         if path == "/api/focus":
             self._focus()
@@ -1392,6 +1649,47 @@ class Handler(http.server.BaseHTTPRequestHandler):
         audit("user", "focus", pane)
         self._json(200, {"ok": True})
 
+    def _type(self):
+        """Send literal text without Enter, so `/`, `@` and `$` open the
+        harness's native completion menu instead of submitting."""
+        body = self._read_json()
+        pane = str(body.get("pane", ""))
+        text = str(body.get("text", ""))
+        if not valid_pane(pane):
+            self._json(400, {"error": "bad_pane"})
+            return
+        if len(text) > 2000:
+            self._json(400, {"error": "too_long"})
+            return
+        if not text:
+            self._json(400, {"error": "empty"})
+            return
+        try:
+            herdr("pane", "send-text", pane, text, timeout=10)
+        except HerdrError as e:
+            self._json(409, {"error": e.code})
+            return
+        audit("user", "type", pane, extra={"len": len(text)})
+        self._json(200, {"ok": True})
+
+    def _menu(self):
+        """Return the harness's current composer completion menu, if open."""
+        body = self._read_json()
+        pane = str(body.get("pane", ""))
+        if not valid_pane(pane):
+            self._json(400, {"error": "bad_pane"})
+            return
+        with STATE.lock:
+            rec = STATE.agents.get(pane)
+        kind = rec.get("kind", "") if rec else ""
+        adapter = get_adapter(kind)
+        if not adapter:
+            self._json(400, {"error": "no_adapter"})
+            return
+        screen = self._body_screen(pane)
+        items = [m.to_json() for m in adapter.parse_menu(screen)]
+        self._json(200, {"items": items, "kind": kind})
+
     def _hire(self):
         body = self._read_json()
         kind = str(body.get("kind", ""))
@@ -1399,6 +1697,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         name = str(body.get("name", ""))
         message = str(body.get("message", ""))[:8000]
         workspace = str(body.get("workspace", "new"))[:64]
+        workspace_label = str(body.get("workspace_label", ""))[:64]
         if kind not in ADAPTERS:
             self._json(400, {"error": "bad_kind"})
             return
@@ -1412,11 +1711,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(400, {"error": "bad_folder"})
             return
         try:
-            _hire_impl(kind, folder, name, message, workspace)
+            _hire_impl(kind, folder, name, message, workspace, workspace_label)
         except HerdrError as e:
             self._json(409, {"error": e.code, "message": str(e)})
             return
-        audit("user", "hire", extra={"kind": kind, "name": name})
+        audit("user", "hire", extra={"kind": kind, "name": name,
+                                     "workspace": workspace})
         STATE.changed()
         self._json(200, {"ok": True})
 
@@ -1754,9 +2054,15 @@ def list_worktrees() -> list[dict]:
 # --------------------------------------------------------------------------
 
 def _hire_impl(kind: str, folder: str, name: str, message: str,
-               workspace: str) -> None:
-    """Hire needs an existing shell pane (measured 0.9.2)."""
-    pane = _new_shell_pane(workspace, folder)
+               workspace: str, workspace_label: str = "") -> None:
+    """Hire as a tab in a workspace (measured 0.9.2).
+
+    A herdr workspace holds one or more tabs; each tab is one shell pane and so
+    one agent. Hiring either adds a tab to an existing workspace or creates a
+    new workspace named by the user. This lets several agents share one
+    workspace, which is the point of the workspace concept.
+    """
+    pane = _new_shell_pane(workspace, workspace_label, folder, name)
     # agent start fails with agent_pane_busy just after tab/pane creation.
     last_err = None
     for _ in range(20):
@@ -1795,17 +2101,22 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
                 break
 
 
-def _new_shell_pane(workspace: str, folder: str) -> str:
+def _new_shell_pane(workspace: str, workspace_label: str, folder: str,
+                    agent_name: str) -> str:
+    """Return a fresh shell pane: a new tab in an existing workspace, or the
+    root tab of a newly created workspace named by the user."""
+    label = workspace_label.strip() or agent_name or os.path.basename(folder)
     if workspace and workspace != "new":
-        # create a tab in the named workspace
+        # Measured: tab create adds a tab (and its root pane) to a workspace,
+        # so several agents can live in one workspace.
         j = herdr("tab", "create", "--workspace", workspace, "--cwd", folder,
-                  "--label", "agent", timeout=20)
+                  "--label", label, "--no-focus", timeout=20)
         r = j.get("result", j)
         pane = r.get("root_pane", {}).get("pane_id") or r.get("pane_id", "")
         if valid_pane(pane):
             return pane
     else:
-        j = herdr("workspace", "create", "--label", os.path.basename(folder),
+        j = herdr("workspace", "create", "--label", label,
                   "--cwd", folder, "--no-focus", timeout=20)
         r = j.get("result", j)
         pane = r.get("root_pane", {}).get("pane_id") or r.get("pane_id", "")
@@ -1822,6 +2133,43 @@ def _new_shell_pane(workspace: str, folder: str) -> str:
     except HerdrError:
         pass
     raise HerdrError("no_pane", "could not create a shell pane for hire")
+
+
+def _workspace_mode(workspace: str, label: str) -> str:
+    """'tab' to add a tab to an existing workspace, else 'create' a new one.
+
+    Measured 0.9.2: a workspace holds many tabs; each tab is one agent. Hiring
+    into an existing workspace adds a tab so several agents share it."""
+    if workspace and workspace not in ("new", "existing"):
+        return "tab"
+    return "create"
+
+
+def list_workspaces() -> list[dict]:
+    """Workspaces with their tabs and agent names, for the Hire picker."""
+    try:
+        snap = snapshot()
+    except HerdrError:
+        return []
+    agents_by_ws: dict[str, list[str]] = {}
+    for a in snap.get("agents", []):
+        agents_by_ws.setdefault(a.get("workspace_id", ""), []).append(
+            a.get("name") or a.get("pane_id", ""))
+    tabs_by_ws: dict[str, int] = {}
+    for t in snap.get("tabs", []):
+        tabs_by_ws[t.get("workspace_id", "")] = \
+            tabs_by_ws.get(t.get("workspace_id", ""), 0) + 1
+    out = []
+    for w in snap.get("workspaces", []):
+        wid = w.get("workspace_id", "")
+        out.append({
+            "id": wid,
+            "label": w.get("label", ""),
+            "tabs": tabs_by_ws.get(wid, 0),
+            "agents": agents_by_ws.get(wid, []),
+        })
+    return out
+
 
 
 def _rehire_impl(entry: dict) -> None:
@@ -1860,6 +2208,56 @@ def _find_closed(key: str) -> dict | None:
             if c.get("pane") == key or c.get("name") == key:
                 return c
     return None
+
+
+def list_folders(path: str) -> dict:
+    """Directories under $HOME for the Hire folder picker.
+
+    Skips dot-directories and anything deeper than 4 levels below $HOME, so the
+    picker stays fast and never exposes unrelated system trees.
+    """
+    home = os.path.realpath(os.path.expanduser("~"))
+    cur = os.path.expanduser(path or "~")
+    if not os.path.isabs(cur):
+        cur = os.path.join(home, cur)
+    cur = os.path.realpath(cur)
+    if not cur.startswith(home) or not os.path.isdir(cur):
+        cur = home
+    rel = os.path.relpath(cur, home)
+    depth = 0 if rel == "." else rel.count(os.sep) + 1
+    dirs: list[dict] = []
+    try:
+        for name in sorted(os.listdir(cur), key=str.lower):
+            if name.startswith("."):
+                continue
+            full = os.path.join(cur, name)
+            if not os.path.isdir(full) or os.path.islink(full):
+                continue
+            child_depth = depth + 1
+            dirs.append({
+                "name": name,
+                "path": full,
+                "has_children": child_depth < 4 and _has_dir(full),
+            })
+    except OSError:
+        pass
+    parent = None
+    if cur != home:
+        parent = os.path.dirname(cur)
+    return {"path": cur, "home": home, "parent": parent,
+            "can_descend": depth < 4, "dirs": dirs}
+
+
+def _has_dir(path: str) -> bool:
+    try:
+        for name in os.listdir(path):
+            if name.startswith("."):
+                continue
+            if os.path.isdir(os.path.join(path, name)):
+                return True
+    except OSError:
+        return False
+    return False
 
 
 def settings_public() -> dict:
@@ -1987,6 +2385,48 @@ def _selfcheck() -> None:
     cx = CodexAdapter()
     assert cx.supports["resume"]
     assert cx.resume_args("abc") == ["resume", "abc"]
+    # codex composer menu (`/` measured: '› /model   choose what model…')
+    cm = cx.parse_menu([
+        "› /model         choose what model and reasoning effort to use",
+        "  /fast          2x speed, increased usage",
+        "  /permissions   choose what Codex is allowed to do",
+        "› /",
+    ])
+    assert len(cm) == 3, cm
+    assert cm[0].trigger == "/" and cm[0].label == "/model" and cm[0].selected
+    assert cm[1].label == "/fast" and cm[1].detail.startswith("2x speed")
+    # codex `$` picker (measured: bare label + [Skill] detail)
+    sm = cx.parse_menu([
+        "› Analytics Dashboard           [Skill] Create spreadsheets with the template",
+        "  Business Review               [Skill] Create presentations with the template",
+    ])
+    assert len(sm) == 2 and sm[0].kind == "skill", sm
+    assert sm[0].label == "Analytics Dashboard"
+    # codex `@` picker (measured: bare label + description + Plugin)
+    am = cx.parse_menu([
+        "› GitHub                Triage PRs, issues, CI, and publish flows     Plugin",
+    ])
+    assert len(am) == 1 and am[0].trigger == "@" and am[0].kind == "plugin", am
+    # footer rows are not menu items
+    assert cx.parse_menu(["  enter insert · esc close"]) == []
+    # opencode menus
+    oc2 = OpencodeAdapter()
+    om = oc2.parse_menu([
+        "  ┃ /agents       Switch agent          ┃",
+        "  ┃ /compact      Compact session        ┃",
+        "  ┃  /                                  ┃",
+    ])
+    assert len(om) == 2 and om[0].label == "/agents", om
+    assert om[0].detail.startswith("Switch")
+    atm = oc2.parse_menu(["  ┃ @explore   ┃", "  ┃ @general   ┃"])
+    assert len(atm) == 2 and atm[0].trigger == "@", atm
+    # claude menu
+    clm = ca.parse_menu([
+        "❯ /clear    Clear conversation history",
+        "  /compact  Compact the conversation",
+    ])
+    assert len(clm) == 2 and clm[0].selected, clm
+    assert clm[0].label == "/clear"
     cxask = cx.parse_prompt([
         "Continue only if you trust these files.",
         "› 1. Trust and continue",
@@ -2043,6 +2483,17 @@ def _selfcheck() -> None:
     assert S2.check_machine_token(raw) == "box1"
     assert S2.machine_tokens["box1"] != raw
     assert all(v != raw for v in S2.machine_tokens.values())
+
+    # hire targets: a workspace name is optional, a tab is added to an existing
+    # workspace; the router picks tab-create vs workspace-create.
+    assert _workspace_mode("new", "") == "create"
+    assert _workspace_mode("wE", "") == "tab"
+    assert _workspace_mode("", "") == "create"
+    # folder picker prunes dot-dirs and depth beyond 4.
+    fl = list_folders("~")
+    assert fl["path"] == os.path.realpath(os.path.expanduser("~"))
+    assert all(not d["name"].startswith(".") for d in fl["dirs"])
+    assert list_folders("/etc")["path"] == fl["home"], "outside $HOME is clamped"
 
     print("selfcheck: OK")
 

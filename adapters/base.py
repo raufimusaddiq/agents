@@ -75,6 +75,20 @@ class Step:
         return dataclasses.asdict(self)
 
 
+@dataclass
+class MenuItem:
+    """One row of a composer completion menu (`/`, `@`, `$`)."""
+
+    trigger: str        # "/" | "@" | "$"
+    label: str          # e.g. "/model" or "GitHub"
+    detail: str = ""    # description shown to the right
+    kind: str = ""      # "command" | "file" | "skill" | "app" | "agent" | ""
+    selected: bool = False
+
+    def to_json(self) -> dict:
+        return dataclasses.asdict(self)
+
+
 class Adapter:
     kind = "base"
     # What this harness reports. UI shows "not reported by <harness>" for gaps.
@@ -106,6 +120,10 @@ class Adapter:
 
     def status_line(self, screen_lines: list[str]) -> dict:
         return {}
+
+    def parse_menu(self, screen_lines: list[str]) -> list[MenuItem]:
+        """Parse an open composer completion menu (`/`, `@`, `$`), or []."""
+        return []
 
 
 class ScreenFallbackMixin:

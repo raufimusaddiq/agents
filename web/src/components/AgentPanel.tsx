@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { ScrollArea, Tabs, Textarea } from "@mantine/core";
+import { ScrollArea, Tabs } from "@mantine/core";
 import type { Agent, ChatRow } from "../types";
 import { api } from "../api";
 import { AnswerCard } from "./AnswerCard";
+import { TerminalModal } from "./TerminalModal";
+import { Composer } from "./Composer";
 
 function ChatThread({ rows }: { rows: ChatRow[] }) {
   return (
@@ -245,8 +247,7 @@ export function AgentPanel({
   onClose: () => void;
 }) {
   const [agent, setAgent] = useState<Agent | null>(null);
-  const [msg, setMsg] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [termOpen, setTermOpen] = useState(false);
   const timer = useRef<number | null>(null);
 
   async function load() {
@@ -287,7 +288,7 @@ export function AgentPanel({
           <button
             type="button"
             className="ab-btn board-mini"
-            onClick={() => api.focus(agent.pane)}
+            onClick={() => setTermOpen(true)}
           >
             Open terminal
           </button>
@@ -301,6 +302,13 @@ export function AgentPanel({
           </button>
         </div>
       </header>
+
+      <TerminalModal
+        pane={agent.pane}
+        name={agent.name}
+        opened={termOpen}
+        onClose={() => setTermOpen(false)}
+      />
 
       {agent.ask && (
         <div className="panel-ask">
@@ -320,36 +328,7 @@ export function AgentPanel({
           <ScrollArea h={360}>
             <ChatThread rows={agent.chat} />
           </ScrollArea>
-          <div className="composer">
-            <Textarea
-              style={{ flex: 1 }}
-              autosize
-              minRows={1}
-              maxRows={4}
-              placeholder="Message the agent"
-              value={msg}
-              onChange={(e) => setMsg(e.currentTarget.value)}
-              aria-label="message agent"
-            />
-            <button
-              type="button"
-              className="ab-btn hire-submit"
-              disabled={loading}
-              onClick={async () => {
-                if (!msg.trim()) return;
-                setLoading(true);
-                try {
-                  await api.prompt(agent.pane, msg);
-                  setMsg("");
-                  load();
-                } finally {
-                  setLoading(false);
-                }
-              }}
-            >
-              {loading ? "Sending…" : "Send"}
-            </button>
-          </div>
+          <Composer pane={agent.pane} onSent={load} />
           {agent.screen_tail && agent.screen_tail.length > 0 && (
             <div className="screen-tail">
               <h3 className="panel-h">Live screen (fallback)</h3>

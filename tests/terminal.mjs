@@ -1,0 +1,38 @@
+import { chromium } from "playwright-core";
+import { homedir } from "node:os"; import { join } from "node:path";
+process.env.LD_LIBRARY_PATH = `${join(homedir(),".local","lib","agent-board")}:${process.env.LD_LIBRARY_PATH||""}`;
+let pass=0, fail=0;
+const chk=(n,c,d="")=>{c?(pass++,console.log("  PASS",n)):(fail++,console.log("  FAIL",n,d))};
+const b=await chromium.launch({headless:true});
+const ctx=await b.newContext({viewport:{width:1440,height:900}});
+const p=await ctx.newPage();
+const ws=[];
+p.on("websocket", s => ws.push(s));
+p.on("pageerror", e=>console.log("PAGEERROR",String(e).slice(0,200)));
+await p.goto("http://127.0.0.1:8792",{waitUntil:"domcontentloaded"});
+await p.waitForTimeout(1200);
+if(await p.getByLabel("board password").count()){await p.getByLabel("board password").fill("board-test-pw");await p.getByRole("button",{name:"Sign in"}).click();}
+await p.locator('[aria-label^="column "]').first().waitFor({timeout:15000});
+await p.locator('[data-testid="card"]').first().click();
+await p.locator('[aria-label^="agent panel"]').waitFor({timeout:8000});
+await p.getByRole("button",{name:"Open terminal"}).click();
+await p.locator(".terminal-host").waitFor({timeout:8000});
+await p.waitForTimeout(5000);
+chk("websocket opened", ws.length>0, JSON.stringify(ws));
+chk("ws url targets terminal", ws.some(s=>s.url().includes("/ws/terminal")));
+const rows = await p.locator(".terminal-host .xterm-rows").count();
+const txt = (await p.locator(".terminal-host .xterm-screen").innerText().catch(()=>"")).replace(/\s+/g," ").trim();
+chk("xterm rows rendered", rows>0, String(rows));
+chk("tui content streamed", txt.length>10, txt.slice(0,80));
+console.log("  terminal text:", txt.slice(0,120));
+await p.screenshot({path:"/tmp/opencode/retro-terminal.png",fullPage:true});
+// type a key, ensure no crash
+await p.locator(".terminal-host").click();
+await p.keyboard.type(" ");
+await p.waitForTimeout(800);
+await p.keyboard.press("Escape");
+await p.waitForTimeout(800);
+chk("modal closed on Escape", (await p.locator(".terminal-host").count())===0);
+await b.close();
+console.log(`\nTERMINAL e2e: ${pass} passed, ${fail} failed`);
+process.exit(fail?1:0);

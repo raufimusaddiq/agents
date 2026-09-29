@@ -128,3 +128,25 @@ export type GitStatus = {
   unpushed_commits: number | null;
   has_remote: boolean;
 };
+
+export type MenuItem = {
+  trigger: string;
+  label: string;
+  detail: string;
+  kind: string;
+  selected: boolean;
+};
+
+export type FolderEntry = {
+  name: string;
+  path: string;
+  has_children: boolean;
+};
+
+export type FolderListing = {
+  path: string;
+  home: string;
+  parent: string | null;
+  can_descend: boolean;
+  dirs: FolderEntry[];
+};

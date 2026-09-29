@@ -8,7 +8,7 @@ import json
 import os
 import re
 
-from .base import Adapter, Ask, Event, Option, Step
+from .base import Adapter, Ask, Event, MenuItem, Option, Step
 
 # Measured: transcript lives here, session id is the jsonl file stem.
 PROJECTS = os.path.expanduser("~/.claude/projects")
@@ -216,6 +216,26 @@ class ClaudeAdapter(Adapter):
             steps.append(Step(keys=["enter"]))
             return steps
         return []
+
+    def parse_menu(self, screen_lines: list[str]) -> list[MenuItem]:
+        """Measured: Claude's slash/`@` composer menu uses '❯ /cmd' (or '❯ @file')
+        as the selected row and '  /cmd  description' for the rest, with a footer
+        like 'Esc to cancel'. Descriptions are separated by two-plus spaces."""
+        items: list[MenuItem] = []
+        for ln in screen_lines:
+            s = PREVIEW_CUT_RE.sub("", ln)
+            m = re.match(r"^\s*(❯)?\s*([/@][^\s]+)\s{2,}(.+)$", s)
+            if m:
+                items.append(MenuItem(
+                    trigger=m.group(2)[0], label=m.group(2).strip(),
+                    detail=m.group(3).strip(), selected=bool(m.group(1))))
+                continue
+            m2 = re.match(r"^\s*(❯)?\s*([/@][^\s]+)\s*$", s)
+            if m2:
+                items.append(MenuItem(
+                    trigger=m2.group(2)[0], label=m2.group(2).strip(),
+                    selected=bool(m2.group(1))))
+        return items
 
     def status_line(self, screen_lines: list[str]) -> dict:
         """Measured: bottom line has model, ctx NN%, $NN.NN, 5h NN% ↻, 7d NN% ↻."""
