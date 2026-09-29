@@ -240,6 +240,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             audit(user, "notify", pane)
             self._json(200, {"ok": True})
             return
+        if path == "/api/dev/reset_lockout":
+            # Localhost only, before the auth gate: lets an automated test that
+            # exercises the lockout clear it afterwards, so it never leaves the
+            # real user blocked.
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                self._deny()
+                return
+            SESSIONS.clear_failures(self._client_ip())
+            audit("local", "reset_lockout")
+            self._json(200, {"ok": True})
+            return
         if not self._auth():
             return self._deny()
         if path == "/api/logout":
