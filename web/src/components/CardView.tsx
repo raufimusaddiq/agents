@@ -1,10 +1,12 @@
 import { Badge, Box, Group, Text, Tooltip } from "@mantine/core";
 import type { Card } from "../types";
 
-const KIND_COLOR: Record<string, string> = {
-  claude: "orange",
-  codex: "teal",
-  opencode: "grape",
+// Harness badge colors come from theme-aware CSS vars so the text stays above
+// WCAG AA 4.5:1 on both light and dark card backgrounds.
+const KIND_VAR: Record<string, string> = {
+  claude: "var(--ab-badge-claude)",
+  codex: "var(--ab-badge-codex)",
+  opencode: "var(--ab-badge-opencode)",
 };
 
 function StationStrip({ stations }: { stations: [string, string][] }) {
@@ -76,8 +78,8 @@ export function CardView({
         </Text>
         <Badge
           size="xs"
-          color={KIND_COLOR[card.kind] || "gray"}
-          variant="light"
+          variant="outline"
+          styles={{ label: { color: KIND_VAR[card.kind] || "var(--mantine-color-text)" } }}
         >
           {card.kind || "?"}
         </Badge>

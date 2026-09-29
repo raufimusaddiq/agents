@@ -240,6 +240,7 @@ export function BoardView({
           </Button>
           <Button
             size="xs"
+            color="blue.9"
             data-testid="hire-open"
             onClick={() => {
               setHirePreset(null);

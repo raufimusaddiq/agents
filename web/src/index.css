@@ -6,9 +6,12 @@
   --ab-reply: #f1f3f5;
   --ab-answer: #fff3bf;
   --ab-bg: #f8f9fa;
+  --ab-badge-claude: #a33b00;
+  --ab-badge-codex: #0b6b5c;
+  --ab-badge-opencode: #6b2fa0;
 }
 
-[data-mantine-color-scheme="dark"] {
+:root[data-mantine-color-scheme="dark"] {
   --ab-card: #24262b;
   --ab-border: #34363c;
   --ab-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
@@ -16,6 +19,15 @@
   --ab-reply: #2b2d33;
   --ab-answer: #4d3f10;
   --ab-bg: #1a1b1e;
+  /* Raise dimmed text contrast above WCAG AA (4.5:1) on the card background. */
+  --mantine-color-dimmed: #b0b2ba;
+  --ab-badge-claude: #ffb38a;
+  --ab-badge-codex: #63e6be;
+  --ab-badge-opencode: #d0a9f5;
+}
+
+:root[data-mantine-color-scheme="light"] {
+  --mantine-color-dimmed: #5c5f66;
 }
 
 html,

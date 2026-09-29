@@ -25,7 +25,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <div
+    <main
       style={{
         display: "flex",
         justifyContent: "center",
@@ -34,7 +34,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
       }}
     >
       <Card withBorder padding="lg" w={340}>
-        <Title order={3} mb="sm">
+        <Title order={1} mb="sm" size="h3">
           Agent Board
         </Title>
         <Stack gap="sm">
@@ -57,6 +57,6 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
           </Button>
         </Stack>
       </Card>
-    </div>
+    </main>
   );
 }

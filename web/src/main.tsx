@@ -97,7 +97,7 @@ function App() {
   }
 
   return (
-    <div
+    <main
       style={{
         display: "flex",
         gap: 12,
@@ -106,6 +106,11 @@ function App() {
         boxSizing: "border-box",
       }}
     >
+      <h1
+        style={{ position: "absolute", left: -9999, width: 1, height: 1, overflow: "hidden" }}
+      >
+        Agent Board
+      </h1>
       <div style={{ flex: selected ? "1 1 60%" : "1 1 100%", minWidth: 0 }}>
         <BoardView
           board={board}
@@ -122,13 +127,13 @@ function App() {
           <AgentPanel pane={selected} onClose={() => setSelected(null)} />
         </div>
       )}
-    </div>
+    </main>
   );
 }
 
 export default function Root() {
   return (
-    <MantineProvider defaultColorScheme="dark">
+    <MantineProvider defaultColorScheme="dark" theme={{ primaryShade: { light: 8, dark: 7 } }}>
       <App />
     </MantineProvider>
   );
