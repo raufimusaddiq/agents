@@ -18,6 +18,7 @@ MEASURED resume: `opencode --session <id>` (session id like ses_...).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -64,7 +65,8 @@ class OpencodeAdapter(ScreenFallbackMixin, Adapter):
     def events(self, session_id: str, state=None) -> list[Event]:
         if not os.path.exists(DB_PATH):
             return []
-        # MEASURED: increment by part.time_created high-water mark per session.
+        # Measured live DB: streaming parts keep their id/time_created and update
+        # time_updated/data. Track revisions, including equal-timestamp writes.
         since = 0
         if state and hasattr(state, "offset_for"):
             since = state.offset_for("opencode:" + session_id)
@@ -72,25 +74,43 @@ class OpencodeAdapter(ScreenFallbackMixin, Adapter):
             con = sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True)
             con.row_factory = sqlite3.Row
             rows = list(con.execute(
-                "SELECT p.data AS pdata, m.data AS mdata, p.time_created AS tc, p.id AS pid "
+                "SELECT p.data AS pdata, m.data AS mdata, p.time_created AS tc, "
+                "p.time_updated AS tu, p.id AS pid "
                 "FROM part p JOIN message m ON m.id=p.message_id "
-                "WHERE p.session_id=? AND p.time_created>? ORDER BY p.time_created, p.rowid",
+                "WHERE p.session_id=? AND p.time_updated>=? ORDER BY p.time_created, p.rowid",
                 (session_id, since)))
             con.close()
         except sqlite3.Error:
             return []
+        versions = None
+        if state is not None:
+            versions = getattr(state, "transcript_versions", None)
+            if versions is None:
+                versions = {}
+                state.transcript_versions = versions
         out: list[Event] = []
         high = since
         for r in rows:
+            high = max(high, r["tu"])
+            key = "opencode:" + session_id + ":" + r["pid"]
+            digest = hashlib.sha256((r["pdata"] + r["mdata"]).encode()).hexdigest()
+            if versions is not None and versions.get(key) == digest:
+                continue
             try:
                 pdata = json.loads(r["pdata"])
                 mdata = json.loads(r["mdata"])
             except ValueError:
                 continue
-            out.extend(_parse_part(pdata, r["tc"], mdata.get("role", "")))
-            high = max(high, r["tc"])
+            events = _parse_part(pdata, r["tc"], mdata.get("role", ""))
+            for index, event in enumerate(events):
+                event.event_id = key + ":" + str(index)
+            out.extend(events)
+            if versions is not None:
+                versions[key] = digest
+                if len(versions) > 10_000:
+                    versions.pop(next(iter(versions)))
         if state and hasattr(state, "set_offset") and high > since:
-            state.set_offset("opencode:" + session_id, high + 1)
+            state.set_offset("opencode:" + session_id, high)
         return out
 
     def resume_args(self, session_id: str) -> list[str]:
@@ -122,6 +142,22 @@ class OpencodeAdapter(ScreenFallbackMixin, Adapter):
                 items.append(MenuItem(trigger="@", label=m3.group(1),
                                       detail=m3.group(2).strip()))
         return items
+
+    def session_status(self, session_id: str) -> dict:
+        row = self.session_row(session_id) or {}
+        model = row.get("model")
+        if isinstance(model, str):
+            try:
+                parsed = json.loads(model)
+                if isinstance(parsed, dict):
+                    model = parsed.get("modelID") or parsed.get("id")
+            except ValueError:
+                pass
+        out = {key: row[key] for key in ("cost", "tokens_input", "tokens_output")
+               if row.get(key) is not None}
+        if model:
+            out["model"] = model
+        return out
 
     def status_line(self, screen_lines: list[str]) -> dict:
         # MEASURED: opencode TUI shows a model + token summary but no ctx %

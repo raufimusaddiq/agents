@@ -28,6 +28,7 @@ class Event:
     ask: dict | None = None
     answer: str = ""
     model: str = ""
+    event_id: str = ""       # stable identity for transcript records updated in place
 
     def to_json(self) -> dict:
         return dataclasses.asdict(self)
@@ -117,6 +118,9 @@ class Adapter:
 
     def resume_args(self, session_id: str) -> list[str]:
         raise NotImplementedError
+
+    def session_status(self, session_id: str) -> dict:
+        return {}
 
     def status_line(self, screen_lines: list[str]) -> dict:
         return {}

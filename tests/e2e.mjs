@@ -1,12 +1,13 @@
 import { chromium } from "playwright-core";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const BASE = process.env.BOARD_URL || "http://127.0.0.1:8792";
+const BASE = process.env.BOARD_URL;
+if (!BASE) throw new Error("Set BOARD_URL to a disposable test server; this suite exercises login lockout.");
 const PW = process.env.BOARD_PW || "board-test-pw";
-const SCRATCH = join(homedir(), "board-e2e-scratch");
+const SCRATCH = mkdtempSync(join(homedir(), "board-e2e-scratch-"));
 const KIND = process.env.E2E_KIND || "opencode";
 const UNIQUE = `e2e${KIND}${Date.now().toString(36)}`;
 
@@ -28,8 +29,6 @@ function sh(cmd, args, opts = {}) {
 }
 
 function gitInit() {
-  rmSync(SCRATCH, { recursive: true, force: true });
-  mkdirSync(SCRATCH, { recursive: true });
   sh("git", ["-C", SCRATCH, "init", "-q", "-b", "main"]);
   sh("git", ["-C", SCRATCH, "config", "user.email", "e2e@test.co"]);
   sh("git", ["-C", SCRATCH, "config", "user.name", "e2e"]);
@@ -62,7 +61,7 @@ async function answerAsk(page, name) {
   await card.click();
   const panel = page.locator(`[aria-label^="agent panel ${name}"]`);
   await panel.waitFor({ timeout: 8000 });
-  const answerBtn = panel.getByRole("button", { name: "Answer" });
+  const answerBtn = panel.getByRole("button", { name: "Send answer", exact: true });
   if (!(await answerBtn.count())) return false;
   // pick first radio if present
   const radio = panel.getByRole("radio").first();

@@ -11,17 +11,34 @@ export function Crew({
   onOpenAgent: (pane: string) => void;
   onClose: () => void;
 }) {
-  const groups: { key: string; title: string; test: (a: AgentChipData) => boolean }[] = [
+  const groups: {
+    key: string;
+    title: string;
+    test: (a: AgentChipData) => boolean;
+  }[] = [
     { key: "needs", title: "Needs you", test: (a) => a.needs_user },
-    { key: "working", title: "On shift", test: (a) => a.agent_status === "working" && !a.needs_user },
-    { key: "idle", title: "Standing by", test: (a) => !a.needs_user && ["idle", "done"].includes(a.agent_status) },
-    { key: "other", title: "Unknown", test: (a) => !a.needs_user && !["working", "idle", "done"].includes(a.agent_status) },
+    {
+      key: "working",
+      title: "On shift",
+      test: (a) => a.agent_status === "working" && !a.needs_user,
+    },
+    {
+      key: "idle",
+      title: "Standing by",
+      test: (a) => !a.needs_user && ["idle", "done"].includes(a.agent_status),
+    },
+    {
+      key: "other",
+      title: "Unknown",
+      test: (a) =>
+        !a.needs_user && !["working", "idle", "done"].includes(a.agent_status),
+    },
   ];
   const placed = new Set<string>();
   return (
     <aside className="crew ab-panel" aria-label="crew">
       <header className="crew-head">
-        <span className="font-display crew-title">Crew</span>
+        <span className="crew-title">Crew</span>
         <span className="crew-count">{agents.length}</span>
         <button
           type="button"

@@ -45,12 +45,15 @@ export function TerminalModal({
     ws.binaryType = "arraybuffer";
 
     const sendResize = () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      if (!disposed && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }),
+        );
       }
     };
 
     ws.onopen = () => {
+      if (disposed) return;
       try {
         fit.fit();
       } catch {
@@ -60,14 +63,17 @@ export function TerminalModal({
       term.focus();
     };
     ws.onmessage = (ev) => {
+      if (disposed) return;
       if (typeof ev.data === "string") term.write(ev.data);
       else term.write(new Uint8Array(ev.data));
     };
     ws.onclose = () => {
+      if (disposed) return;
       term.write("\r\n\x1b[33m[detached — agents keep running]\x1b[0m\r\n");
     };
     const dataSub = term.onData((d) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(new TextEncoder().encode(d));
+      if (ws.readyState === WebSocket.OPEN)
+        ws.send(new TextEncoder().encode(d));
     });
     const resizeSub = term.onResize(sendResize);
     const onWinResize = () => {
@@ -79,11 +85,13 @@ export function TerminalModal({
     };
     window.addEventListener("resize", onWinResize);
     const raf = requestAnimationFrame(onWinResize);
+    const observer = new ResizeObserver(onWinResize);
+    observer.observe(hostRef.current);
 
     return () => {
       disposed = true;
-      void disposed;
       cancelAnimationFrame(raf);
+      observer.disconnect();
       window.removeEventListener("resize", onWinResize);
       dataSub.dispose();
       resizeSub.dispose();
@@ -97,11 +105,7 @@ export function TerminalModal({
       opened={opened}
       onClose={onClose}
       fullScreen
-      title={
-        <span className="font-display terminal-title">
-          Terminal · {name}
-        </span>
-      }
+      title={<span className="terminal-title">Terminal · {name}</span>}
     >
       <div
         className="terminal-host"

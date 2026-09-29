@@ -73,7 +73,7 @@ export function TicketCard({
       aria-label={`ticket ${ticket.name}`}
     >
       <header className="ticket-head">
-        <span className="ticket-name font-display">{ticket.name}</span>
+        <span className="ticket-name">{ticket.name}</span>
         {needs && <span className="ticket-alarm">needs you</span>}
       </header>
       <p className="ticket-meta">
@@ -92,7 +92,11 @@ export function TicketCard({
       )}
       <div className="ticket-agents">
         {ticket.agents.map((a) => (
-          <AgentChip key={a.pane} agent={a} onOpen={() => onOpenAgent(a.pane)} />
+          <AgentChip
+            key={a.pane}
+            agent={a}
+            onOpen={() => onOpenAgent(a.pane)}
+          />
         ))}
       </div>
       {ticket.unpushed != null && ticket.unpushed > 0 && (
@@ -102,7 +106,11 @@ export function TicketCard({
         <p className="ticket-ctx">ctx {ticket.context_pct_max}% max</p>
       )}
       {onOpenWorktree && (
-        <button type="button" className="ab-btn board-mini" onClick={onOpenWorktree}>
+        <button
+          type="button"
+          className="ab-btn board-mini"
+          onClick={onOpenWorktree}
+        >
           Rehire here
         </button>
       )}

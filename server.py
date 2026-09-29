@@ -9,18 +9,21 @@ allow-list. Every action that reaches an agent or git is audited.
 """
 from __future__ import annotations
 
+from datetime import datetime
 import hmac
 import http.server
 import json
 import os
 import re
 import secrets
+import shlex
 import signal
 import socket
 import socketserver
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.error
@@ -198,7 +201,8 @@ def valid_pane(pane: str) -> bool:
 
 
 def valid_keys(keys: list[str]) -> bool:
-    return all(k in ALLOWED_KEYS for k in keys)
+    return (isinstance(keys, list) and len(keys) <= 100
+            and all(isinstance(k, str) and k in ALLOWED_KEYS for k in keys))
 
 
 def read_screen(pane: str, lines: int = 60) -> list[str]:
@@ -265,7 +269,9 @@ class Sessions:
         tok = secrets.token_urlsafe(32)  # 256 bits
         hours = config()["auth"]["session_hours"]
         with self.lock:
-            self.tokens[tok] = time.time() + hours * 3600
+            now = time.time()
+            self.tokens = {key: expiry for key, expiry in self.tokens.items() if expiry > now}
+            self.tokens[tok] = now + hours * 3600
         return tok
 
     def valid(self, tok: str | None) -> bool:
@@ -331,13 +337,23 @@ class Sessions:
 SESSIONS = Sessions()
 
 
+_secrets_lock = threading.Lock()
+
+
 def _save_machine_tokens() -> None:
-    SECRETS_PATH.write_text(json.dumps(
-        {"machine_tokens": SESSIONS.machine_tokens}, indent=2))
-    try:
-        os.chmod(SECRETS_PATH, 0o600)
-    except OSError:
-        pass
+    with _secrets_lock:
+        with SESSIONS.lock:
+            data = {"machine_tokens": dict(SESSIONS.machine_tokens)}
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8",
+                                             dir=SECRETS_PATH.parent, delete=False) as file:
+                temporary = Path(file.name)
+                json.dump(data, file, indent=2)
+            os.replace(temporary, SECRETS_PATH)
+        finally:
+            if temporary and temporary.exists():
+                temporary.unlink()
 
 
 def _load_machine_tokens() -> None:
@@ -362,8 +378,7 @@ def origin_allowed(host: str, origin: str | None) -> bool:
     if origin is None:
         return True  # same-origin XHR may omit Origin; Host still checked
     p = urllib.parse.urlparse(origin)
-    return (p.netloc in allowed_hosts) or (p.hostname in
-            {h.split(":")[0] for h in allowed_hosts})
+    return p.scheme in {"http", "https"} and p.netloc in allowed_hosts
 
 
 # --------------------------------------------------------------------------
@@ -428,30 +443,44 @@ def git_status(repo: str) -> dict:
         if rc == 0 and ab.strip():
             parts = ab.split()
             out["behind"], out["ahead"] = int(parts[0]), int(parts[1])
-    rc, numstat = git(repo, "diff", "HEAD", "--numstat")
+    rc, numstat = git(repo, "diff", "HEAD", "--numstat", "-z")
     files = []
-    for line in numstat.splitlines():
-        c = line.split("\t")
-        if len(c) == 3:
-            files.append({"added": c[0], "removed": c[1], "path": c[2]})
+    entries = iter(numstat.split("\0"))
+    for entry in entries:
+        columns = entry.split("\t", 2)
+        if len(columns) != 3:
+            continue
+        added, removed, path = columns
+        if not path:
+            # Rename/copy records have two separate NUL-terminated paths.
+            next(entries, "")  # source
+            path = next(entries, "")
+        if path:
+            files.append({"added": added, "removed": removed, "path": path})
     rc, porcelain = git(repo, "status", "--porcelain=v1", "-z",
                         "--untracked-files=all")
-    for entry in porcelain.split("\0"):
-        if not entry:
+    entries = iter(porcelain.split("\0"))
+    for entry in entries:
+        if len(entry) < 4:
             continue
         code = entry[:2]
         path = entry[3:]
-        if not any(f["path"] == path for f in files):
+        if "R" in code or "C" in code:
+            next(entries, "")  # source path is not a second changed file
+        existing = next((file for file in files if file["path"] == path), None)
+        if existing:
+            existing["status"] = code.strip() or "?"
+        else:
             files.append({"added": "0", "removed": "0", "path": path,
                           "status": code.strip() or "?"})
     out["files"] = files[:300]
     out["files_capped"] = len(files) > 300
-    rc, commits = git(repo, "log", "-15", "--pretty=%H|%h|%s|%cI|%d")
+    rc, commits = git(repo, "log", "-15", "--pretty=%H%x00%h%x00%s%x00%cI%x00%d")
     rc_remotes, remotes_out = git(repo, "remote")
     has_remote = bool(remotes_out.strip())
     clist = []
     for line in commits.splitlines():
-        parts = line.split("|", 4)
+        parts = line.split("\0", 4)
         if len(parts) == 5:
             sha, short, subj, date, refs = parts
             # Measured: `branch -r --contains` returns rc 0 even with no
@@ -495,6 +524,8 @@ class State:
     def __init__(self):
         self.lock = threading.RLock()
         self.offsets: dict[str, int] = {}
+        self.transcript_versions: dict[str, str] = {}
+        self.feedback_revision = 0
         self.agents: dict[str, dict] = {}       # pane -> agent record
         self.events: dict[str, list[dict]] = {}  # pane -> normalized events
         self.closed: list[dict] = []             # rehirable
@@ -502,6 +533,7 @@ class State:
         self.dismissed: set[str] = set()
         self.handled: set[str] = set()
         self.notified: dict[str, float] = {}
+        self.attention_notified: set[str] = set()
         self.frozen_roster: list[dict] | None = None
         self.usage_history: dict[str, list[tuple[float, int]]] = {}
         self.last_push = 0.0
@@ -538,7 +570,8 @@ class _Queue:
 
     def put(self, item):
         with self.cv:
-            self.items.append(item)
+            # Subscribers only need to know that state changed, not each event.
+            self.items[:] = [item]
             self.cv.notify_all()
 
     def get(self, timeout=25):
@@ -681,12 +714,24 @@ def poll_transcripts() -> None:
         if evs:
             with STATE.lock:
                 STATE.events.setdefault(pane, [])
-                STATE.events[pane].extend(_norm_events(pane, evs))
-                STATE.events[pane] = STATE.events[pane][-2000:]
+                history = STATE.events[pane]
+                indices = {event.get("event_id"): i for i, event in enumerate(history)
+                           if event.get("event_id")}
+                for event in _norm_events(pane, evs):
+                    event_id = event.get("event_id")
+                    if event_id and event_id in indices:
+                        history[indices[event_id]] = event
+                    else:
+                        if event_id:
+                            indices[event_id] = len(history)
+                        history.append(event)
+                STATE.events[pane] = history[-2000:]
+                STATE.feedback_revision += 1
 
 
 def read_screens() -> None:
     """Read screen tails for agents that need questions or status lines."""
+    pending_notifications = []
     with STATE.lock:
         agents = list(STATE.agents.values())
     for rec in agents:
@@ -697,35 +742,37 @@ def read_screens() -> None:
             screen = read_screen(pane, 60)
         except HerdrError:
             continue
+        st = adapter.session_status(rec.get("session_id", "")) if adapter else {}
+        if adapter and adapter.supports.get("status_line"):
+            st.update(adapter.status_line(screen))
         with STATE.lock:
             r = STATE.agents.get(pane)
             if not r:
                 continue
             r["screen_tail"] = screen[-60:]
-            if adapter and adapter.supports.get("status_line"):
-                st = adapter.status_line(screen)
-                r["status"] = st
-                _track_usage(pane, st)
-            if adapter and adapter.supports.get("prompts"):
-                ask = adapter.parse_prompt(screen)
-                r["ask"] = ask.to_json() if ask else None
-                if ask and getattr(ask, "kind", "") in ("question", "trust"):
-                    r["needs_user"] = True
-                # Fallback: a screen that clearly waits for the user (login URL,
-                # device code, a raw question) but does not parse into options
-                # still needs the user. Never guess an answer; offer raw keys.
-                elif _screen_needs_user(screen, r.get("agent_status")):
-                    r["needs_user"] = True
-                    r["ask"] = {
-                        "question": "\n".join(screen[-6:]).strip(),
-                        "options": [], "multi": False, "submit_row": "",
-                        "tabs": [], "context": "unparsed", "kind": "raw",
-                        "raw": "\n".join(screen[-20:]),
-                    }
-                else:
-                    r["needs_user"] = False
-            else:
-                r["ask"] = None
+            r["status"] = st
+            _track_usage(pane, st)
+            r["screen_updated_at"] = time.time()
+            ask = adapter.parse_prompt(screen) if adapter and adapter.supports.get("prompts") else None
+            r["ask"] = ask.to_json() if ask else None
+            # Every harness gets the same attention/fallback behavior.
+            r["needs_user"] = bool(ask) or r.get("agent_status") == "blocked" or _screen_needs_user(screen, r.get("agent_status"), kind)
+            if not r["needs_user"]:
+                STATE.attention_notified.discard(pane)
+            elif pane not in STATE.attention_notified:
+                pending_notifications.append((pane, r.get("name") or pane))
+            if r["needs_user"] and not ask:
+                r["ask"] = {
+                    "question": "\n".join(screen[-6:]).strip(),
+                    "options": [], "multi": False, "submit_row": "",
+                    "tabs": [], "context": "unparsed", "kind": "raw",
+                    "raw": "\n".join(screen[-20:]),
+                }
+
+    for pane, name in pending_notifications:
+        if notify(f"Needs you: {name}", "An agent is waiting for your input. Open the board to respond.", pane):
+            with STATE.lock:
+                STATE.attention_notified.add(pane)
 
 
 # A screen that unmistakably waits for the user, even without parsed options.
@@ -736,7 +783,12 @@ _NEEDS_USER_MARKERS = (
 )
 
 
-def _screen_needs_user(screen: list[str], agent_status: str) -> bool:
+def _screen_needs_user(screen: list[str], agent_status: str, kind: str = "") -> bool:
+    # Codex keeps historical output above its ordinary input box. Markers in
+    # that history (or the user draft) are not an active approval prompt. Parsed
+    # numbered menus and an explicit blocked runtime state still take priority.
+    if kind == "codex" and any(line.lstrip().startswith("›") and not re.match(r"^\d+\.", line.lstrip()[1:].lstrip()) for line in screen[-8:]):
+        return False
     text = "\n".join(screen[-40:]).lower()
     if any(m in text for m in _NEEDS_USER_MARKERS):
         return True
@@ -755,8 +807,27 @@ def _track_usage(pane: str, st: dict) -> None:
     STATE.usage_history[pane] = [h for h in hist if h[0] > cutoff]
 
 
+def feedback_signature() -> str:
+    """Ignore polling timestamps; publish meaningful changes and transcript revisions."""
+    with STATE.lock:
+        keys = ("pane", "name", "kind", "cwd", "agent_status", "session_id",
+                "tab_label", "ws_label", "needs_user", "ask", "status", "screen_tail")
+        state = {
+            "agents": [{key: rec.get(key) for key in keys} for rec in STATE.agents.values()],
+            "revision": STATE.feedback_revision,
+            "alerts": STATE.alerts,
+            "closed": STATE.closed,
+            "dismissed": sorted(STATE.dismissed),
+            "handled": sorted(STATE.handled),
+            "frozen": STATE.frozen_roster,
+        }
+        return __import__("hashlib").sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()
+
+
 def poll_loop() -> None:
     last = 0.0
+    last_feedback = None
+    last_git_refresh = 0.0
     while True:
         try:
             reconcile_agents()
@@ -769,7 +840,11 @@ def poll_loop() -> None:
             if now - last >= cfg["roster"]["save_seconds"]:
                 save_roster()
                 last = now
-            STATE.changed()
+            current_feedback = feedback_signature()
+            if current_feedback != last_feedback or now - last_git_refresh >= cfg["workflow"]["git_reread_seconds"]:
+                STATE.changed()
+                last_feedback = current_feedback
+                last_git_refresh = now
         except Exception as e:  # never let the loop die
             print(f"poll_loop error: {e}", file=sys.stderr)
         time.sleep(3.0)
@@ -836,28 +911,74 @@ CODE_EXT = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs", ".rb", ".java",
 STATIONS = ["Start check", "Branch", "Code", "Tests", "Review", "Commit",
             "Docs", "Push", "PR"]
 
-GIT_RULES = [
-    ("status", re.compile(r"\bgit\s+(-C\s+\S+\s+)?status\b")),
-    ("stash", re.compile(r"\bgit\s+(-C\s+\S+\s+)?stash\s+list\b")),
-    ("fetch", re.compile(r"\bgit\s+(-C\s+\S+\s+)?fetch\b")),
-    ("revlist", re.compile(r"\bgit\s+(-C\s+\S+\s+)?rev-list\s+--count\b")),
-    ("stage_all", re.compile(r"\bgit\s+(-C\s+\S+\s+)?add\s+(-A|\.|--all)\b|\bgit\s+(-C\s+\S+\s+)?commit\s+(-[a-z]*a[a-z]*\b|--all)")),
-    ("commit", re.compile(r"\bgit\s+(-C\s+\S+\s+)?commit\b")),
-    ("show", re.compile(r"\bgit\s+(-C\s+\S+\s+)?show\s+([0-9a-f]{7,40}):")),
-    ("push", re.compile(r"\bgit\s+(-C\s+\S+\s+)?push\b")),
-    ("pr", re.compile(r"\bgh\s+pr\s+create\b|\bglab\s+mr\s+create\b|/merge_requests\b")),
-]
+def shell_commands(command: str) -> list[list[str]]:
+    """Find command positions; quoted source and heredoc text are not executions."""
+    lines = (command or "").splitlines()
+    clean = []
+    delimiter = None
+    for line in lines:
+        if delimiter:
+            if line.strip() == delimiter:
+                delimiter = None
+            continue
+        clean.append(line)
+        match = re.search(r"<<-?\s*['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line)
+        if match:
+            delimiter = match.group(1)
+    try:
+        lexer = shlex.shlex("\n".join(clean), posix=True, punctuation_chars=";&|()\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        commands = []
+        current = []
+        for token in lexer:
+            if token and all(char in ";&|()\n" for char in token):
+                if current:
+                    commands.append(current)
+                current = []
+            else:
+                current.append(token)
+        if current:
+            commands.append(current)
+        return commands
+    except ValueError:
+        return []
 
 
 def classify_git(command: str) -> list[str]:
     kinds = []
-    for name, rx in GIT_RULES:
-        if rx.search(command or ""):
-            kinds.append(name)
-    # Don't count --amend as commit -a (measured rule).
-    if "--amend" in (command or ""):
-        kinds = [k for k in kinds if k != "stage_all"]
-    return kinds
+    for tokens in shell_commands(command):
+        # Skip environment assignments and explicit command wrappers.
+        while tokens and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]) or tokens[0] in {"env", "command", "then", "do"}):
+            tokens = tokens[1:]
+        if not tokens:
+            continue
+        executable = os.path.basename(tokens[0])
+        if executable in {"gh", "glab"} and tokens[1:3] in (["pr", "create"], ["mr", "create"]):
+            kinds.append("pr")
+        if executable != "git":
+            continue
+        args = tokens[1:]
+        while args and args[0].startswith("-"):
+            option = args.pop(0)
+            if option in {"-C", "-c", "--git-dir", "--work-tree"} and args:
+                args.pop(0)
+        if not args:
+            continue
+        action, flags = args[0], args[1:]
+        if action in {"status", "commit", "push", "fetch"}:
+            kinds.append(action)
+        if action == "stash" and flags[:1] == ["list"]:
+            kinds.append("stash")
+        if action == "rev-list" and "--count" in flags:
+            kinds.append("revlist")
+        if action == "add" and any(flag in {".", "-A", "--all"} for flag in flags):
+            kinds.append("stage_all")
+        if action == "commit" and any(flag == "--all" or (flag.startswith("-") and not flag.startswith("--") and "a" in flag) for flag in flags):
+            kinds.append("stage_all")
+        if action == "show" and any(re.match(r"^[0-9a-f]{7,40}:", flag) for flag in flags):
+            kinds.append("show")
+    return list(dict.fromkeys(kinds))
 
 
 def edited_code_files(events: list[dict]) -> set[str]:
@@ -866,11 +987,44 @@ def edited_code_files(events: list[dict]) -> set[str]:
         if e.get("kind") == "edit" and e.get("path"):
             if Path(e["path"]).suffix.lower() in CODE_EXT:
                 out.add(e["path"])
-        if e.get("kind") == "bash":
-            for k in classify_git(e.get("command", "")):
-                if k == "commit":
-                    out.add("__commit__")
     return out
+
+
+def has_test_action(events: list[dict]) -> bool:
+    for event in events:
+        if event.get("kind") == "subagent_start" and "test" in event.get("subagent_type", "").lower():
+            return True
+        if event.get("kind") != "bash":
+            continue
+        for tokens in shell_commands(event.get("command", "")):
+            while tokens and (re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[0]) or tokens[0] in {"env", "command"}):
+                tokens = tokens[1:]
+            if not tokens:
+                continue
+            executable, args = os.path.basename(tokens[0]), tokens[1:]
+            if executable == "pytest":
+                return True
+            if re.fullmatch(r"python[0-9.]*", executable) and "-m" in args:
+                index = args.index("-m")
+                if args[index + 1:index + 2] in (["pytest"], ["unittest"]):
+                    return True
+            if executable in {"npm", "pnpm", "yarn", "bun"}:
+                if args[:1] == ["run"]:
+                    args = args[1:]
+                if args and (args[0] == "test" or args[0].startswith("test:")):
+                    return True
+            if executable in {"go", "cargo", "dotnet", "playwright"} and args[:1] == ["test"]:
+                return True
+            if executable == "npx" and args[:2] == ["playwright", "test"]:
+                return True
+            if executable in {"node", "python", "python3"} and args and re.search(r"(?:^|[/\\])tests?[/\\]", args[0]):
+                return True
+    return False
+
+
+def has_review_action(events: list[dict]) -> bool:
+    return any(event.get("kind") == "subagent_start" and "review" in event.get("subagent_type", "").lower()
+               for event in events)
 
 
 def compute_stations(rec: dict, events: list[dict], repo: str | None) -> dict:
@@ -884,8 +1038,21 @@ def compute_stations(rec: dict, events: list[dict], repo: str | None) -> dict:
     if "status" in kinds or "revlist" in kinds:
         done.add("Start check")
     code = edited_code_files(events)
+    if repo:
+        rc, changed = git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+        entries = iter(changed.split("\0"))
+        for entry in entries if rc == 0 else []:
+            if len(entry) >= 4:
+                if Path(entry[3:]).suffix.lower() in CODE_EXT:
+                    code.add(entry[3:])
+                if "R" in entry[:2] or "C" in entry[:2]:
+                    next(entries, "")
     if code:
         done.add("Code")
+    if has_test_action(events):
+        done.add("Tests")
+    if has_review_action(events):
+        done.add("Review")
     if "commit" in kinds:
         done.add("Commit")
     if "push" in kinds:
@@ -1014,39 +1181,47 @@ def derive_ticket(rec: dict, events: list[dict], repo: str | None,
     return {"id": "Unnamed work", "name": "Unnamed work", "source": ""}
 
 
+def _event_is_recent(event: dict, cutoff: float) -> bool:
+    value = event.get("ts")
+    if not value:
+        return True
+    try:
+        timestamp = float(value)
+        if timestamp > 100_000_000_000:
+            timestamp /= 1000
+    except (ValueError, TypeError):
+        try:
+            timestamp = datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return True
+    return timestamp >= cutoff
+
+
 def _detect_alerts() -> None:
-    """Workflow alerts from the last 24 hours. Pure heuristics, never guesses."""
+    """Use observed actions between commits, and limit alerts to the last day."""
     with STATE.lock:
-        agents = list(STATE.agents.items())
+        agents = [(pane, list(STATE.events.get(pane, []))) for pane in STATE.agents]
+        dismissed = set(STATE.dismissed)
     cutoff = time.time() - 24 * 3600
-    for pane, rec in agents:
-        events = STATE.events.get(pane, [])
-        repo = repo_root(rec.get("cwd") or "") or None
-        commits = [e for e in events if e.get("kind") == "bash"
-                   and "commit" in classify_git(e.get("command", ""))]
-        if not commits:
-            continue
-        tests = [e for e in events if e.get("kind") == "subagent_start"
-                 and "test" in e.get("subagent_type", "").lower()]
-        reviews = [e for e in events if e.get("kind") == "subagent_start"
-                   and "review" in e.get("subagent_type", "").lower()]
-        code = edited_code_files(events)
-        for c in commits:
-            key = f"{pane}:{c.get('ts')}:code_no_test"
-            if code and not tests and not reviews and key not in STATE.dismissed:
-                _add_alert("code_no_test", "A commit carried code but no test "
-                           "subagent or test command ran since the previous commit.",
-                           pane=pane, key=key)
-        # stage-everything
-        for e in events:
-            if e.get("kind") != "bash":
+    for pane, events in agents:
+        since_commit = []
+        for event in events:
+            since_commit.append(event)
+            if event.get("kind") != "bash":
                 continue
-            if "stage_all" in classify_git(e.get("command", "")):
-                key = f"{pane}:{e.get('ts')}:stage_all"
-                if code and key not in STATE.dismissed:
+            kinds = classify_git(event.get("command", ""))
+            code = edited_code_files(since_commit)
+            if "stage_all" in kinds and code and _event_is_recent(event, cutoff):
+                key = f"{pane}:{event.get('ts')}:stage_all"
+                if key not in dismissed:
                     _add_alert("stage_all", "Used stage-everything (git add -A / "
-                               "commit -a) in a session that changed code.",
-                               pane=pane, key=key)
+                               "commit -a) after changing code.", pane=pane, key=key)
+            if "commit" in kinds:
+                key = f"{pane}:{event.get('ts')}:code_no_test"
+                if code and not has_test_action(since_commit) and not has_review_action(since_commit) and key not in dismissed and _event_is_recent(event, cutoff):
+                    _add_alert("code_no_test", "Code changed before this commit, but no test "
+                               "or review action was observed since the previous commit.", pane=pane, key=key)
+                since_commit = []
 
 
 def _add_alert(kind: str, message: str, pane: str = "", key: str = "") -> None:
@@ -1074,30 +1249,33 @@ def note_page_open() -> None:
 
 
 def page_recently_open(seconds: int = 30) -> bool:
+    with STATE.lock:
+        if STATE._subscribers:
+            return True
     with _page_lock:
         return (time.time() - _last_page_seen) < seconds
 
 
-def notify(title: str, body: str, pane: str = "") -> None:
+def notify(title: str, body: str, pane: str = "") -> bool:
     """Rate-limit to one push per agent per minute. Never include secrets."""
+    if page_recently_open():
+        return False
     rate = config()["notifications"].get("rate_limit_seconds", 60)
     key = pane or "global"
     now = time.time()
     with STATE.lock:
         last = STATE.notified.get(key, 0)
         if now - last < rate:
-            return
+            return False
         STATE.notified[key] = now
-    if page_recently_open():
-        return  # the page raises its own Notification + chime
-    _send_webhook(title, body)
+    return _send_webhook(title, body)
 
 
-def _send_webhook(title: str, body: str) -> None:
+def _send_webhook(title: str, body: str) -> bool:
     hook = config()["notifications"].get("webhook", {})
     kind = hook.get("kind", "none")
     if kind == "none":
-        return
+        return False
     board_url = _board_url()
     payload = None
     url = None
@@ -1114,19 +1292,20 @@ def _send_webhook(title: str, body: str) -> None:
         token = hook.get("bot_token", "")
         chat = hook.get("chat_id", "")
         if not (token and chat):
-            return
+            return False
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = json.dumps({"chat_id": chat,
                               "text": f"{title}\n{body}\n{board_url}"}).encode()
         headers = {"Content-Type": "application/json"}
     if not url:
-        return
+        return False
     try:
         req = urllib.request.Request(url, data=payload, headers=headers,
                                      method="POST")
-        urllib.request.urlopen(req, timeout=10)
+        with urllib.request.urlopen(req, timeout=10):
+            return True
     except (urllib.error.URLError, OSError, ValueError):
-        pass
+        return False
 
 
 def _board_url() -> str:
@@ -1200,7 +1379,9 @@ def _ws_recv(sock) -> tuple[int, bytes] | None:
         length = _struct.unpack("!H", readn(2))[0]
     elif length == 127:
         length = _struct.unpack("!Q", readn(8))[0]
-    mask = readn(4) if masked else b"\x00\x00\x00\x00"
+    if not masked or length > 1_000_000:
+        raise ConnectionError("invalid or oversized WebSocket frame")
+    mask = readn(4)
     payload = readn(length) if length else b""
     if masked:
         payload = bytes(c ^ mask[i % 4] for i, c in enumerate(payload))
@@ -1215,8 +1396,9 @@ class TerminalSession:
     to the client, which only detaches: the server and its agents keep running.
     """
 
-    def __init__(self, sock, pane: str, cols: int, rows: int):
+    def __init__(self, sock, pane: str, cols: int, rows: int, authorized=None):
         self.sock = sock
+        self.authorized = authorized
         self.pane = pane
         self.cols = max(20, min(cols, 400))
         self.rows = max(5, min(rows, 200))
@@ -1224,6 +1406,11 @@ class TerminalSession:
         self.fd = -1
         self._stop = threading.Event()
         self._sender = None
+        self._send_lock = threading.Lock()
+
+    def _send(self, payload: bytes, opcode: int) -> None:
+        with self._send_lock:
+            _ws_send(self.sock, payload, opcode)
 
     def _env(self) -> dict:
         env = {k: v for k, v in os.environ.items()
@@ -1277,10 +1464,20 @@ class TerminalSession:
             if not data:
                 break
             try:
-                _ws_send(self.sock, data, _WS_BINARY)
+                self._send(data, _WS_BINARY)
             except OSError:
                 break
         self._stop.set()
+        try:
+            self.sock.shutdown(socket.SHUT_RD)
+        except OSError:
+            pass
+
+    def _reap(self) -> None:
+        try:
+            os.waitpid(self.pid, 0)
+        except (ChildProcessError, OSError):
+            pass
 
     def run(self) -> None:
         try:
@@ -1291,6 +1488,11 @@ class TerminalSession:
         t.start()
         try:
             while not self._stop.is_set():
+                if self.authorized and not self.authorized():
+                    break
+                readable, _, _ = _select.select([self.sock], [], [], 1.0)
+                if not readable:
+                    continue
                 frame = _ws_recv(self.sock)
                 if frame is None:
                     break
@@ -1298,7 +1500,7 @@ class TerminalSession:
                 if opcode == _WS_CLOSE:
                     break
                 if opcode == _WS_PING:
-                    _ws_send(self.sock, payload, _WS_PONG)
+                    self._send(payload, _WS_PONG)
                     continue
                 if opcode in (_WS_TEXT, _WS_BINARY):
                     # Control messages: a small JSON prelude drives resize.
@@ -1307,14 +1509,19 @@ class TerminalSession:
                             msg = json.loads(payload)
                         except ValueError:
                             msg = {}
-                        if msg.get("type") == "resize":
-                            self.resize(int(msg.get("cols", self.cols)),
-                                        int(msg.get("rows", self.rows)))
+                        if isinstance(msg, dict) and msg.get("type") == "resize":
+                            try:
+                                self.resize(int(msg.get("cols", self.cols)),
+                                            int(msg.get("rows", self.rows)))
+                            except (ValueError, TypeError, OverflowError):
+                                pass
                             continue
                     try:
                         os.write(self.fd, payload)
                     except OSError:
                         break
+        except (ConnectionError, OSError):
+            pass
         finally:
             self._stop.set()
             # SIGHUP only detaches the herdr client; the server keeps running.
@@ -1323,13 +1530,16 @@ class TerminalSession:
                     os.kill(self.pid, signal.SIGHUP)
                 except OSError:
                     pass
+            if self.pid > 0:
+                # Reap the detached client without blocking other requests.
+                threading.Thread(target=self._reap, daemon=True).start()
             if self.fd >= 0:
                 try:
                     os.close(self.fd)
                 except OSError:
                     pass
             try:
-                _ws_send(self.sock, b"", _WS_CLOSE)
+                self._send(b"", _WS_CLOSE)
             except OSError:
                 pass
 
@@ -1353,8 +1563,12 @@ def serve_terminal(handler) -> None:
     q = urllib.parse.urlparse(handler.path).query
     params = urllib.parse.parse_qs(q)
     pane = params.get("pane", [""])[0]
-    cols = int(params.get("cols", ["80"])[0] or 80)
-    rows = int(params.get("rows", ["24"])[0] or 24)
+    try:
+        cols = int(params.get("cols", ["80"])[0] or 80)
+        rows = int(params.get("rows", ["24"])[0] or 24)
+    except ValueError:
+        handler._json(400, {"error": "bad_dimensions"})
+        return
     if not valid_pane(pane):
         handler._json(400, {"error": "bad_pane"})
         return
@@ -1365,9 +1579,10 @@ def serve_terminal(handler) -> None:
     handler.send_header("Sec-WebSocket-Accept", _ws_accept(key))
     handler.end_headers()
     sock = handler.connection
+    sock.settimeout(10)
     audit(user, "terminal_open", pane, extra={"cols": cols, "rows": rows})
     try:
-        TerminalSession(sock, pane, cols, rows).run()
+        TerminalSession(sock, pane, cols, rows, authorized=handler._auth).run()
     finally:
         audit(user, "terminal_close", pane)
         handler.close_connection = True
@@ -1377,6 +1592,23 @@ def serve_terminal(handler) -> None:
 # HTTP handler
 # --------------------------------------------------------------------------
 
+def prompt_identity(ask: dict) -> dict:
+    """Compare the question and choices, ignoring live cursor/screen changes."""
+    if not isinstance(ask, dict) or not isinstance(ask.get("options", []), list):
+        raise ValueError("bad_prompt")
+    if any(not isinstance(option, dict) for option in ask.get("options", [])):
+        raise ValueError("bad_prompt")
+    return {
+        "question": ask.get("question", ""),
+        "kind": ask.get("kind", ""),
+        "multi": ask.get("multi", False),
+        "tabs": ask.get("tabs", []),
+        "options": [{key: option.get(key) for key in
+                     ("number", "label", "description", "kind", "preview")}
+                    for option in ask.get("options", [])],
+    }
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     server_version = "AgentBoard/1.0"
     protocol_version = "HTTP/1.1"
@@ -1385,27 +1617,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass  # quiet; audit log is the record
 
     # -- helpers ---------------------------------------------------------
-    def _json(self, code: int, obj) -> None:
+    def _json(self, code: int, obj, headers: dict | None = None) -> None:
         data = json.dumps(obj).encode()
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Cache-Control", "no-store")
+        for key, value in (headers or {}).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(data)
 
     def _read_json(self) -> dict:
+        if self.headers.get("Transfer-Encoding"):
+            raise ValueError("unsupported_transfer_encoding")
         try:
             n = int(self.headers.get("Content-Length", "0"))
         except ValueError:
-            n = 0
-        if n <= 0:
+            raise ValueError("bad_content_length") from None
+        if n < 0:
+            raise ValueError("bad_content_length")
+        if n > 1_000_000:
+            raise ValueError("body_too_large")
+        if n == 0:
             return {}
-        raw = self.rfile.read(min(n, 1_000_000))
         try:
-            return json.loads(raw)
-        except ValueError:
-            return {}
+            body = json.loads(self.rfile.read(n))
+        except (ValueError, UnicodeDecodeError):
+            raise ValueError("bad_json") from None
+        if not isinstance(body, dict):
+            raise ValueError("json_object_required")
+        return body
 
     def _host(self) -> str:
         return self.headers.get("Host", "")
@@ -1423,10 +1666,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if token:
             name = SESSIONS.check_machine_token(token)
             if name:
-                return f"machine:{name}"
-        c = cookies.SimpleCookie(self.headers.get("Cookie", ""))
+                self._request_user = f"machine:{name}"
+                return self._request_user
+        try:
+            c = cookies.SimpleCookie(self.headers.get("Cookie", ""))
+        except cookies.CookieError:
+            return None
         m = c.get("board_session")
         if m and SESSIONS.valid(m.value):
+            self._request_user = "user"
             return "user"
         return None
 
@@ -1485,7 +1733,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not valid_pane(pane):
                 self._json(400, {"error": "bad_pane"})
                 return
-            audit("user", "read_screen", pane)
+            audit(getattr(self, "_request_user", "user"), "read_screen", pane)
             self._json(200, {"lines": self._body_screen(pane)})
             return
         if path == "/api/worktrees":
@@ -1512,6 +1760,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._json(404, {"error": "not_found"})
 
     def do_POST(self):
+        # Close rejected requests: unread bytes must never become a new request.
+        self.close_connection = True
+        try:
+            self._dispatch_post()
+        except HerdrError as e:
+            self._json(409, {"error": e.code})
+        except (TypeError, OverflowError):
+            self._json(400, {"error": "bad_request"})
+        except ValueError as e:
+            self._json(413 if str(e) == "body_too_large" else 400,
+                       {"error": str(e)})
+
+    def _dispatch_post(self):
         p = urllib.parse.urlparse(self.path)
         path = p.path
         if path == "/api/login":
@@ -1523,12 +1784,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not user:
                 return self._deny()
             body = self._read_json()
-            note_page_open()
             pane = str(body.get("pane", ""))[:64]
             title = str(body.get("title", ""))[:200]
             text = str(body.get("body", ""))[:1000]
             _add_alert("agent_alert", text or title, pane=pane)
-            notify(title or "Agent alert", text, pane=pane)
+            notify("Agent alert", "An agent posted an alert. Open the board to review it.", pane=pane)
             STATE.changed()
             audit(user, "notify", pane)
             self._json(200, {"ok": True})
@@ -1540,7 +1800,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             m = c.get("board_session")
             if m:
                 SESSIONS.revoke(m.value)
-            self._json(200, {"ok": True})
+            self._json(200, {"ok": True}, {"Set-Cookie": "board_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/"})
             return
         if path == "/api/answer":
             self._answer()
@@ -1584,11 +1844,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             name = str(body.get("name", ""))[:64]
             if action == "create" and name:
                 raw = SESSIONS.add_machine_token(name)
-                audit("user", "machine_token_create", extra={"name": name})
+                audit(getattr(self, "_request_user", "user"), "machine_token_create", extra={"name": name})
                 self._json(200, {"token": raw})
             elif action == "revoke" and name:
                 SESSIONS.revoke_machine_token(name)
-                audit("user", "machine_token_revoke", extra={"name": name})
+                audit(getattr(self, "_request_user", "user"), "machine_token_revoke", extra={"name": name})
                 self._json(200, {"ok": True})
             else:
                 self._json(400, {"error": "bad_request"})
@@ -1612,6 +1872,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # -- auth ------------------------------------------------------------
     def _login(self):
+        if not origin_allowed(self._host(), self.headers.get("Origin")):
+            return self._deny()
         ip = self._client_ip()
         if SESSIONS.locked_out(ip):
             self._json(429, {"error": "locked_out"})
@@ -1627,8 +1889,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # remote hostname is configured; otherwise a local http://127.0.0.1
             # browser would refuse to store/send the cookie.
             cfg2 = config()
+            local_hosts = {f"127.0.0.1:{cfg2['port']}", f"localhost:{cfg2['port']}"}
             secure = (self.headers.get("X-Forwarded-Proto") == "https"
-                      or bool(cfg2["remote"]["hostnames"]))
+                      or self._host() not in local_hosts)
             cookie = (f"board_session={tok}; HttpOnly; "
                       f"{'Secure; ' if secure else ''}SameSite=Strict; Path=/; "
                       f"Max-Age={cfg['auth']['session_hours'] * 3600}")
@@ -1636,10 +1899,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Set-Cookie", cookie)
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
-            audit("user", "login_ok")
+            audit(getattr(self, "_request_user", "user"), "login_ok")
             return
         SESSIONS.record_failure(ip)
         audit("anonymous", "login_fail")
@@ -1659,7 +1923,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(404, {"error": "no_agent"})
             return
         adapter = get_adapter(rec.get("kind", ""))
-        if not adapter:
+        if not adapter or not adapter.supports.get("prompts"):
             self._json(400, {"error": "no_adapter"})
             return
         screen = self._body_screen(pane)
@@ -1667,6 +1931,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not ask:
             self._json(409, {"error": "prompt_changed",
                              "lines": screen[-30:]})
+            return
+        expected = body.get("expected_prompt")
+        if expected is not None and prompt_identity(expected) != prompt_identity(ask.to_json()):
+            self._json(409, {"error": "prompt_changed"})
             return
         answer = body.get("answer")
         steps = adapter.plan_answer(ask, answer)
@@ -1685,7 +1953,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 herdr("agent", "prompt", pane, st.text, timeout=15)
                 sent.append({"text": True})
             time.sleep(st.wait)
-        audit("user", "answer", pane, extra={"steps": len(steps)})
+        audit(getattr(self, "_request_user", "user"), "answer", pane, extra={"steps": len(steps)})
         notify("Agent Board answered", f"Answered a prompt for {rec.get('name', pane)}.", pane=pane)
         STATE.changed()
         self._json(200, {"ok": True, "steps": sent})
@@ -1705,18 +1973,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code})
             return
-        audit("user", "prompt", pane, extra={"len": len(text)})
+        audit(getattr(self, "_request_user", "user"), "prompt", pane, extra={"len": len(text)})
         STATE.changed()
         self._json(200, {"ok": True})
 
     def _keys(self):
         body = self._read_json()
         pane = str(body.get("pane", ""))
-        keys = [str(k) for k in body.get("keys", [])][:10]
+        keys = body.get("keys", [])
         if not valid_pane(pane):
             self._json(400, {"error": "bad_pane"})
             return
-        if not valid_keys(keys):
+        if not keys or not valid_keys(keys):
             self._json(400, {"error": "bad_key"})
             return
         try:
@@ -1724,7 +1992,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code})
             return
-        audit("user", "keys", pane)
+        audit(getattr(self, "_request_user", "user"), "keys", pane)
         self._json(200, {"ok": True})
 
     def _focus(self):
@@ -1738,7 +2006,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code})
             return
-        audit("user", "focus", pane)
+        audit(getattr(self, "_request_user", "user"), "focus", pane)
         self._json(200, {"ok": True})
 
     def _type(self):
@@ -1761,7 +2029,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code})
             return
-        audit("user", "type", pane, extra={"len": len(text)})
+        audit(getattr(self, "_request_user", "user"), "type", pane, extra={"len": len(text)})
         self._json(200, {"ok": True})
 
     def _menu(self):
@@ -1802,8 +2070,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         folder = os.path.expanduser(folder)
         home = os.path.expanduser("~")
-        if not os.path.isdir(folder) or not os.path.realpath(folder).startswith(
-                os.path.realpath(home)):
+        if not os.path.isdir(folder) or not Path(folder).resolve().is_relative_to(
+                Path(home).resolve()):
             self._json(400, {"error": "bad_folder"})
             return
         if use_worktree and not repo_root(folder):
@@ -1815,7 +2083,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code, "message": str(e)})
             return
-        audit("user", "hire", extra={"kind": kind, "name": name,
+        audit(getattr(self, "_request_user", "user"), "hire", extra={"kind": kind, "name": name,
                                      "workspace": workspace,
                                      "worktree": use_worktree, "yolo": yolo})
         STATE.changed()
@@ -1833,7 +2101,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code, "message": str(e)})
             return
-        audit("user", "rehire", extra={"name": entry.get("name", "")})
+        audit(getattr(self, "_request_user", "user"), "rehire", extra={"name": entry.get("name", "")})
         STATE.changed()
         self._json(200, {"ok": True})
 
@@ -1859,7 +2127,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with STATE.lock:
             for a in alerts:
                 STATE.handled.add(a["key"])
-        audit("user", "remind", pane, extra={"count": len(alerts)})
+        audit(getattr(self, "_request_user", "user"), "remind", pane, extra={"count": len(alerts)})
         STATE.changed()
         self._json(200, {"ok": True})
 
@@ -1869,21 +2137,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not path or not os.path.isdir(path):
             self._json(400, {"error": "bad_path"})
             return
-        # Refused while anything is unsaved.
-        rc, out = git(path, "status", "--porcelain")
-        if rc == 0 and out.strip():
-            self._json(409, {"error": "dirty", "detail": out[:500]})
+        target = Path(path).resolve()
+        with STATE.lock:
+            occupied = any(rec.get("cwd") and Path(rec["cwd"]).resolve().is_relative_to(target)
+                           for rec in STATE.agents.values())
+        if occupied:
+            self._json(409, {"error": "occupied"})
+            return
+        reason = worktree_removal_blocker(path)
+        if reason:
+            self._json(409, {"error": reason})
             return
         try:
-            p = subprocess.run(["git", "-C", path, "worktree", "remove", path],
-                               capture_output=True, text=True, timeout=20)
-        except (subprocess.TimeoutExpired, OSError):
-            self._json(409, {"error": "failed"})
+            _remove_worktree_by_path(path)
+        except HerdrError as e:
+            self._json(409, {"error": e.code, "detail": str(e)})
             return
-        if p.returncode != 0:
-            self._json(409, {"error": "failed", "detail": p.stderr[:500]})
-            return
-        audit("user", "worktree_remove", extra={"path": path})
+        audit(getattr(self, "_request_user", "user"), "worktree_remove", extra={"path": path})
         STATE.changed()
         self._json(200, {"ok": True})
 
@@ -1917,7 +2187,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(409, {"error": e.code, "message": str(e)})
             return
         _ = home
-        audit("user", "worktree_create",
+        audit(getattr(self, "_request_user", "user"), "worktree_create",
               extra={"repo": repo, "branch": branch})
         STATE.changed()
         self._json(200, {"ok": True})
@@ -1933,7 +2203,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except HerdrError as e:
             self._json(409, {"error": e.code, "message": str(e)})
             return
-        audit("user", "worktree_open", extra={"path": path})
+        audit(getattr(self, "_request_user", "user"), "worktree_open", extra={"path": path})
         STATE.changed()
         self._json(200, {"ok": True})
 
@@ -1973,7 +2243,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         wt_result = ""
         if rec.get("worktree_path"):
             wt_result = remove_agent_worktree(rec)
-        audit("user", "fire", pane,
+        audit(getattr(self, "_request_user", "user"), "fire", pane,
               extra={"name": rec.get("name", ""),
                      "worktree_removed": not wt_result,
                      "worktree_skip": wt_result})
@@ -1999,7 +2269,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         else:
             self._json(400, {"error": "bad_request"})
             return
-        audit("user", "diff", extra={"repo": repo, "sha": sha, "path": path})
+        audit(getattr(self, "_request_user", "user"), "diff", extra={"repo": repo, "sha": sha, "path": path})
         self._json(200, {"diff": diff})
 
     # -- SSE -------------------------------------------------------------
@@ -2016,6 +2286,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.flush()
             while True:
                 item = q.get(timeout=25)
+                if not self._auth():
+                    break
                 now = time.time()
                 if item is None:
                     # keep-alive comment; not a real change
@@ -2024,8 +2296,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     continue
                 # Only push when something real changed, at most 1/s.
                 if now - last_push < 1.0:
-                    continue
-                last_push = now
+                    time.sleep(1.0 - (now - last_push))
+                last_push = time.time()
                 payload = json.dumps({"type": "changed", "t": int(now)})
                 self.wfile.write(f"data: {payload}\n\n".encode())
                 self.wfile.flush()
@@ -2039,7 +2311,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         safe = os.path.normpath(rel).lstrip("/")
         base = ROOT / "web" / "dist"
         full = (base / safe).resolve()
-        if not str(full).startswith(str(base.resolve())) or not full.exists():
+        if not full.is_relative_to(base.resolve()):
+            self._json(404, {"error": "not_found"})
+            return
+        if not full.is_file():
             # SPA fallback
             full = base / "index.html"
         if not full.exists():
@@ -2073,7 +2348,7 @@ def build_board() -> dict:
     a column, because an agent and a ticket have different lifecycles.
     """
     with STATE.lock:
-        agents = list(STATE.agents.values())
+        agents = [dict(rec) for rec in STATE.agents.values()]
         events = {p: list(v) for p, v in STATE.events.items()}
         closed = list(STATE.closed)
         alerts = list(STATE.alerts)
@@ -2221,6 +2496,9 @@ def build_agent(pane: str) -> dict:
         "notes": adapter.notes if adapter else [],
         "ask": rec.get("ask"), "screen_tail": rec.get("screen_tail", []),
         "status": rec.get("status", {}),
+        "agent_status": rec.get("agent_status", "unknown"),
+        "needs_user": bool(rec.get("needs_user")),
+        "updated_at": rec.get("screen_updated_at", rec.get("last_seen")),
         "usage_history": STATE.usage_history.get(pane, []),
         "rehire_key": pane,
     }
@@ -2233,7 +2511,7 @@ def _build_chat(events: list[dict]) -> list[dict]:
         k = e.get("kind")
         if k in ("prompt", "reply", "answer", "question"):
             out.append(e)
-        elif k in ("edit", "bash", "subagent_start", "subagent_end", "tokens"):
+        elif k in ("edit", "bash", "subagent_start", "subagent_end", "tokens", "tool"):
             if out and out[-1].get("_fold") == k:
                 out[-1]["_count"] = out[-1].get("_count", 1) + 1
                 continue
@@ -2516,6 +2794,28 @@ def create_agent_worktree(repo: str, branch: str, base: str,
     }
 
 
+def worktree_removal_blocker(path: str) -> str:
+    """Require successful Git checks before removing a checkout."""
+    rc, dirty = git(path, "status", "--porcelain")
+    if rc != 0:
+        return "cannot verify worktree status"
+    if dirty.strip():
+        return "uncommitted changes"
+    rc, remotes = git(path, "remote")
+    if rc != 0:
+        return "cannot verify remotes"
+    if remotes.strip():
+        rc, count = git(path, "rev-list", "--count", "HEAD", "--not", "--remotes")
+        if rc != 0:
+            return "cannot verify unpushed commits"
+        try:
+            if int(count.strip()) > 0:
+                return "unpushed commits"
+        except ValueError:
+            return "cannot verify unpushed commits"
+    return ""
+
+
 def remove_agent_worktree(rec: dict) -> str:
     """Remove the worktree an agent owns, refusing while it is dirty.
 
@@ -2529,18 +2829,9 @@ def remove_agent_worktree(rec: dict) -> str:
         return "no worktree"
     if not os.path.isdir(path):
         return "already gone"
-    rc, dirty = git(path, "status", "--porcelain")
-    if rc == 0 and dirty.strip():
-        return "uncommitted changes"
-    # A worktree with commits that are not on any remote is not safe to delete
-    # silently — but only when the repo actually has a remote. With no remote,
-    # every commit is "unpushed" and that would block every removal.
-    rc, remotes = git(path, "remote")
-    if rc == 0 and remotes.strip():
-        rc, count = git(path, "rev-list", "--count", "HEAD", "--not",
-                        "--remotes")
-        if rc == 0 and int(count.strip() or 0) > 0:
-            return "unpushed commits"
+    reason = worktree_removal_blocker(path)
+    if reason:
+        return reason
     try:
         if ws:
             try:
@@ -2565,8 +2856,11 @@ def _remove_worktree_by_path(path: str) -> None:
                      "--git-common-dir")
     main_repo = os.path.dirname(common.strip()) if rc == 0 and common.strip() \
         else path
-    p = subprocess.run(["git", "-C", main_repo, "worktree", "remove", path],
-                       capture_output=True, text=True, timeout=30)
+    try:
+        p = subprocess.run(["git", "-C", main_repo, "worktree", "remove", path],
+                           capture_output=True, text=True, timeout=30)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise HerdrError("remove_failed", "worktree removal failed") from e
     if p.returncode != 0:
         raise HerdrError("remove_failed", p.stderr.strip()[:200])
 
@@ -2691,7 +2985,7 @@ def list_folders(path: str) -> dict:
     if not os.path.isabs(cur):
         cur = os.path.join(home, cur)
     cur = os.path.realpath(cur)
-    if not cur.startswith(home) or not os.path.isdir(cur):
+    if not Path(cur).is_relative_to(Path(home)) or not os.path.isdir(cur):
         cur = home
     rel = os.path.relpath(cur, home)
     depth = 0 if rel == "." else rel.count(os.sep) + 1
@@ -3015,9 +3309,14 @@ def _args():
     for i, a in enumerate(sys.argv):
         if a == "--port" and i + 1 < len(sys.argv):
             port = int(sys.argv[i + 1])
-        if a == "--set-password" and i + 1 < len(sys.argv):
+        if a == "--set-password":
+            import getpass
+            password = sys.argv[i + 1] if i + 1 < len(sys.argv) and not sys.argv[i + 1].startswith("--") else getpass.getpass("Set board password: ")
+            if not password:
+                print("Password cannot be empty", file=sys.stderr)
+                sys.exit(1)
             cfg = load_config()
-            cfg["auth"]["password_hash"] = hash_password(sys.argv[i + 1])
+            cfg["auth"]["password_hash"] = hash_password(password)
             save_config()
             print("password set")
             sys.exit(0)
@@ -3030,7 +3329,8 @@ def main() -> None:
     STATE_DIR.mkdir(exist_ok=True)
     _selfcheck()
     port = _args() or config()["port"]
-    host = config()["bind"]
+    config()["port"] = port
+    host = "127.0.0.1"
 
     threading.Thread(target=poll_loop, daemon=True).start()
 
@@ -3047,7 +3347,7 @@ def main() -> None:
         print("Remote off. SSH tunnel: "
               f"ssh -L {port}:127.0.0.1:{port} <server>")
     if not config()["auth"].get("password_hash"):
-        print("WARNING: no password set. Run: python3 server.py --set-password <pw>")
+        print("WARNING: no password set. Run: python3 server.py --set-password")
 
     def stop(*_):
         # shutdown() blocks until serve_forever() returns; calling it directly

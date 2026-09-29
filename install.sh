@@ -3,18 +3,23 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PORT="${AGENT_BOARD_PORT:-8792}"
+# Quote the actual checkout for systemd, including spaces and literal percent signs.
+UNIT_PROJECT_DIR="$(python3 -c 'import sys; print(sys.argv[1].replace("\\", "\\\\").replace("\"", "\\\"").replace("%", "%%"))' "$PWD")"
 
 echo "== Agent Board install =="
+if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1 || [ "$(node -p 'process.platform')" = "win32" ]; then
+  echo "Install native Linux Node.js and npm before running the installer." >&2
+  exit 1
+fi
 
 # 1. Password
 if ! python3 -c "import json;exit(0 if json.load(open('config.json'))['auth'].get('password_hash') else 1)" 2>/dev/null; then
-  read -rsp "Set board password: " PW; echo
-  python3 server.py --set-password "$PW"
+  python3 server.py --set-password
 fi
 
 # 2. Front end
 if command -v npm >/dev/null 2>&1; then
-  ( cd web && npm install --no-audit --no-fund && npm run build )
+  ( cd web && npm ci --no-audit --no-fund && npm run build )
 else
   echo "npm not found; skipping front-end build" >&2
 fi
@@ -27,8 +32,8 @@ Description=Agent Board - live ticket board for herdr agents
 After=network.target
 [Service]
 Type=simple
-WorkingDirectory=%h/agents
-ExecStart=/usr/bin/python3 %h/agents/server.py --port $PORT
+WorkingDirectory="$UNIT_PROJECT_DIR"
+ExecStart=/usr/bin/python3 "$UNIT_PROJECT_DIR/server.py" --port $PORT
 Environment=HOME=%h
 Environment=PATH=%h/.local/bin:%h/.local/node/bin:%h/.opencode/bin:/usr/local/bin:/usr/bin:/bin
 Restart=always

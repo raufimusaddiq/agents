@@ -19,6 +19,7 @@ export function AnswerCard({
   const [error, setError] = useState("");
 
   async function submit() {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -32,10 +33,24 @@ export function AnswerCard({
       } else {
         answer = { text: typed };
       }
-      await api.answer(pane, answer);
+      await api.answer(pane, answer, ask);
       onDone();
     } catch (e) {
       setError(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendKey(key: string) {
+    if (busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      await api.keys(pane, [key]);
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to send key.");
     } finally {
       setBusy(false);
     }
@@ -84,41 +99,48 @@ export function AnswerCard({
                   onChange={() => setSelected(o.number ?? i)}
                 />
               )}
-              {o.description && (
-                <p className="answer-desc">{o.description}</p>
-              )}
-              {o.preview && (
-                <pre className="answer-preview">{o.preview}</pre>
-              )}
+              {o.description && <p className="answer-desc">{o.description}</p>}
+              {o.preview && <pre className="answer-preview">{o.preview}</pre>}
             </div>
           ))}
         </Stack>
       ) : (
         <p className="answer-desc">
-          No choices to pick from. Type an answer, or use the keys below.
+          {ask.kind === "raw"
+            ? "Use the keys below or open the terminal to respond."
+            : "No choices to pick from. Type an answer, or use the keys below."}
         </p>
       )}
-      <TextInput
-        mt="sm"
-        placeholder="Type an answer"
-        value={typed}
-        onChange={(e) => setTyped(e.currentTarget.value)}
-        aria-label="typed answer"
-      />
-      {error && <p className="hire-error">{error}</p>}
+      {ask.kind !== "raw" && (
+        <TextInput
+          mt="sm"
+          placeholder="Type an answer"
+          value={typed}
+          onChange={(e) => setTyped(e.currentTarget.value)}
+          aria-label="typed answer"
+        />
+      )}
+      {error && (
+        <p className="hire-error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="answer-actions">
-        <button
-          type="button"
-          className="ab-btn hire-submit"
-          onClick={submit}
-          disabled={busy}
-        >
-          {busy ? "Sending…" : "Send answer"}
-        </button>
+        {ask.kind !== "raw" && (
+          <button
+            type="button"
+            className="ab-btn hire-submit"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? "Sending…" : "Send answer"}
+          </button>
+        )}
         <button
           type="button"
           className="ab-btn board-mini"
-          onClick={() => api.keys(pane, ["esc"]).then(onDone)}
+          disabled={busy}
+          onClick={() => void sendKey("esc")}
         >
           Cancel
         </button>
@@ -127,7 +149,8 @@ export function AnswerCard({
             key={k}
             type="button"
             className="ab-btn board-mini"
-            onClick={() => api.keys(pane, [k]).then(onDone)}
+            disabled={busy}
+            onClick={() => void sendKey(k)}
           >
             {k}
           </button>

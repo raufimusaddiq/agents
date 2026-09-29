@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "python3 -m unittest discover -s tests -p \"test_*.py\" && python3 -c \"import server; server.load_config(); server._selfcheck()\"",
+    "build": "npm run build --prefix web",
+    "test:ui": "node tests/ui-audit.mjs",
+    "test:live": "node tests/live-audit.mjs"
   },
   "repository": {
     "type": "git",

@@ -1,11 +1,5 @@
 import { useEffect, useState } from "react";
-import {
-  Modal,
-  ScrollArea,
-  Select,
-  Stack,
-  TextInput,
-} from "@mantine/core";
+import { Modal, ScrollArea, Select, Stack, TextInput } from "@mantine/core";
 import type { Board, FolderListing, Worktree } from "../types";
 import { api } from "../api";
 import { TicketCard } from "./TicketCard";
@@ -33,6 +27,7 @@ function WorktreeModal({
   }, [opened, repos]);
 
   async function submit() {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -49,13 +44,16 @@ function WorktreeModal({
     <Modal
       opened={opened}
       onClose={onClose}
-      title={<span className="font-display hire-title">New worktree</span>}
+      title={<span className="hire-title">New worktree</span>}
       centered
     >
       <Stack gap="sm">
         <Select
           label="Repository"
-          data={repos.map((r) => ({ value: r, label: r.split("/").pop() || r }))}
+          data={repos.map((r) => ({
+            value: r,
+            label: r.split("/").pop() || r,
+          }))}
           value={repo}
           onChange={(v) => setRepo(v || "")}
           allowDeselect={false}
@@ -75,7 +73,11 @@ function WorktreeModal({
           onChange={(e) => setBase(e.currentTarget.value)}
           aria-label="worktree base"
         />
-        {error && <p className="hire-error">{error}</p>}
+        {error && (
+          <p className="hire-error" role="alert">
+            {error}
+          </p>
+        )}
         <button
           type="button"
           className="ab-btn hire-submit"
@@ -218,13 +220,19 @@ function HireModal({
 
   useEffect(() => {
     if (!opened) return;
+    if (preset) {
+      setFolder(preset.folder);
+      setName(preset.name);
+    }
+    setError("");
     api
       .workspaces()
       .then((r) => setWorkspaces(r.workspaces))
       .catch(() => setWorkspaces([]));
-  }, [opened]);
+  }, [opened, preset]);
 
   async function submit() {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -261,7 +269,7 @@ function HireModal({
     <Modal
       opened={opened}
       onClose={onClose}
-      title={<span className="font-display hire-title">Hire an agent</span>}
+      title={<span className="hire-title">Hire an agent</span>}
       centered
     >
       <Stack gap="sm">
@@ -290,20 +298,16 @@ function HireModal({
           />
         ) : (
           <p className="panel-note">
-            Adds a tab to{" "}
-            <strong>{sameWorkspace?.label || workspace}</strong>
+            Adds a tab to <strong>{sameWorkspace?.label || workspace}</strong>
             {sameWorkspace && sameWorkspace.agents.length > 0
               ? ` — already there: ${sameWorkspace.agents.join(", ")}`
               : ""}
           </p>
         )}
-        <FolderPicker
-          value={preset?.folder ?? folder}
-          onChange={setFolder}
-        />
+        <FolderPicker value={folder} onChange={setFolder} />
         <TextInput
-          label="Name (1-40 chars)"
-          value={preset?.name ?? name}
+          label="Name (1–32 lowercase characters)"
+          value={name}
           onChange={(e) => setName(e.currentTarget.value)}
           aria-label="hire name"
         />
@@ -354,7 +358,11 @@ function HireModal({
             </span>
           </label>
         </div>
-        {error && <p className="hire-error">{error}</p>}
+        {error && (
+          <p className="hire-error" role="alert">
+            {error}
+          </p>
+        )}
         <button
           type="button"
           className="ab-btn hire-submit"
@@ -373,7 +381,9 @@ function WorktreeCards({
   worktrees,
   onRehire,
   onOpen,
+  readOnly,
 }: {
+  readOnly: boolean;
   worktrees: Worktree[];
   onRehire: (w: Worktree) => void;
   onOpen: (w: Worktree) => void;
@@ -388,7 +398,7 @@ function WorktreeCards({
           data-flip-id={`wt:${w.path}`}
           aria-label={`worktree ${w.path}`}
         >
-          <p className="park-branch font-display">{w.ticket || "Unnamed work"}</p>
+          <p className="park-branch">{w.ticket || "Unnamed work"}</p>
           <p className="park-path mono">{w.branch || "detached"}</p>
           <p className="park-stats">
             <span className={w.uncommitted ? "park-chip is-warn" : "park-chip"}>
@@ -400,6 +410,7 @@ function WorktreeCards({
             <button
               type="button"
               className="ab-btn board-mini"
+              disabled={readOnly}
               onClick={() => onRehire(w)}
             >
               Rehire here
@@ -407,6 +418,7 @@ function WorktreeCards({
             <button
               type="button"
               className="ab-btn board-mini"
+              disabled={readOnly}
               onClick={() => onOpen(w)}
             >
               Open
@@ -414,6 +426,7 @@ function WorktreeCards({
             <button
               type="button"
               className="ab-btn board-mini is-danger"
+              disabled={readOnly}
               onClick={() => {
                 setErr("");
                 api.removeWorktree(w.path).catch((e) => {
@@ -424,7 +437,11 @@ function WorktreeCards({
               Remove
             </button>
           </div>
-          {err && <p className="hire-error">Remove refused: {err}</p>}
+          {err && (
+            <p className="hire-error" role="alert">
+              Remove refused: {err}
+            </p>
+          )}
         </article>
       ))}
       {worktrees.length === 0 && (
@@ -436,11 +453,17 @@ function WorktreeCards({
 
 export function BoardView({
   board,
+  connectionState,
+  onLogout,
+  logoutBusy,
   theme,
   onToggleTheme,
   onSelect,
 }: {
   board: Board;
+  connectionState: "connecting" | "live" | "reconnecting";
+  onLogout: () => void;
+  logoutBusy: boolean;
   theme: string;
   onToggleTheme: () => void;
   selected: string | null;
@@ -454,8 +477,10 @@ export function BoardView({
   );
   const [hireOpen, setHireOpen] = useState(false);
   const [wtOpen, setWtOpen] = useState(false);
-  const [hirePreset, setHirePreset] =
-    useState<{ folder: string; name: string } | null>(null);
+  const [hirePreset, setHirePreset] = useState<{
+    folder: string;
+    name: string;
+  } | null>(null);
   const ref = useFlip(
     JSON.stringify(board.tickets.map((t) => [t.id, t.stage])),
   );
@@ -477,10 +502,35 @@ export function BoardView({
       <header className="ab-panel board-header">
         <div className="board-brand">
           <span className="font-display board-wordmark">Agent&nbsp;Board</span>
+          <span
+            className="board-feedback"
+            data-live={connectionState === "live"}
+            role="status"
+          >
+            <span
+              className={`lamp ${connectionState === "live" ? "is-idle" : "is-unknown"}`}
+              aria-hidden
+            />
+            {connectionState === "live"
+              ? "Live"
+              : connectionState === "reconnecting"
+                ? "Reconnecting…"
+                : "Connecting…"}
+            <span className="board-feedback-time">
+              Updated{" "}
+              {new Date(board.now * 1000).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+              })}
+            </span>
+          </span>
         </div>
 
         <div
-          className={needsCount ? "ab-marquee board-marquee is-live" : "board-marquee"}
+          className={
+            needsCount ? "ab-marquee board-marquee is-live" : "board-marquee"
+          }
           data-testid="needs-counter"
           role="status"
           aria-live="polite"
@@ -534,6 +584,14 @@ export function BoardView({
           >
             Crew
           </button>
+          <button
+            type="button"
+            className="ab-btn board-ctl"
+            onClick={onLogout}
+            disabled={logoutBusy}
+          >
+            {logoutBusy ? "Signing out…" : "Sign out"}
+          </button>
           {board.remote_on && (
             <span className="board-remote" data-testid="remote-badge">
               remote on
@@ -551,6 +609,7 @@ export function BoardView({
           <button
             type="button"
             className="ab-btn board-ctl"
+            disabled={board.read_only}
             data-testid="worktree-open"
             onClick={() => setWtOpen(true)}
           >
@@ -559,6 +618,7 @@ export function BoardView({
           <button
             type="button"
             className="ab-btn board-ctl is-primary"
+            disabled={board.read_only}
             data-testid="hire-open"
             onClick={() => {
               setHirePreset(null);
@@ -578,7 +638,7 @@ export function BoardView({
 
       {board.alerts.length > 0 && (
         <section className="ab-panel board-alerts" aria-label="workflow alerts">
-          <h2 className="font-display board-alerts-title">
+          <h2 className="board-alerts-title">
             Skipped steps
             <span className="board-alerts-note">last 24 hours</span>
           </h2>
@@ -589,6 +649,7 @@ export function BoardView({
                 <button
                   type="button"
                   className="ab-btn board-mini"
+                  disabled={!!board.read_only}
                   onClick={() => api.remind(a.pane)}
                 >
                   Remind agent
@@ -596,6 +657,7 @@ export function BoardView({
                 <button
                   type="button"
                   className="ab-btn board-mini"
+                  disabled={!!board.read_only}
                   onClick={() => api.dismiss(a.key)}
                 >
                   Dismiss
@@ -607,12 +669,16 @@ export function BoardView({
       )}
 
       <div className="board-body">
-        <div ref={ref} className="board-columns">
+        <div
+          ref={ref}
+          className="board-columns"
+          tabIndex={0}
+          role="region"
+          aria-label="Ticket board"
+        >
           {board.columns.map((col) => {
             const colTickets =
-              col === "Parked"
-                ? []
-                : tickets.filter((t) => t.stage === col);
+              col === "Parked" ? [] : tickets.filter((t) => t.stage === col);
             const count =
               col === "Parked" ? board.worktrees.length : colTickets.length;
             return (
@@ -633,6 +699,7 @@ export function BoardView({
                     {col === "Parked" ? (
                       <WorktreeCards
                         worktrees={board.worktrees}
+                        readOnly={!!board.read_only}
                         onRehire={(w) => {
                           setHirePreset({
                             folder: w.path,
@@ -707,4 +774,3 @@ export function BoardView({
     </div>
   );
 }
-

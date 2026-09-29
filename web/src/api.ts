@@ -1,4 +1,4 @@
-import type { Agent, Board, MenuItem } from "./types";
+import type { Agent, Ask, Board, MenuItem } from "./types";
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -34,10 +34,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pane, text }),
     }),
-  answer: (pane: string, answer: unknown) =>
+  answer: (pane: string, answer: unknown, expectedPrompt?: Ask) =>
     req<{ ok: boolean }>("/api/answer", {
       method: "POST",
-      body: JSON.stringify({ pane, answer }),
+      body: JSON.stringify({ pane, answer, expected_prompt: expectedPrompt }),
     }),
   keys: (pane: string, keys: string[]) =>
     req<{ ok: boolean }>("/api/keys", {
@@ -114,7 +114,12 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  createWorktree: (body: { repo: string; branch: string; base?: string; label?: string }) =>
+  createWorktree: (body: {
+    repo: string;
+    branch: string;
+    base?: string;
+    label?: string;
+  }) =>
     req<{ ok: boolean }>("/api/worktree_create", {
       method: "POST",
       body: JSON.stringify(body),

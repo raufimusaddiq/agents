@@ -8,6 +8,7 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
   const [busy, setBusy] = useState(false);
 
   async function submit() {
+    if (busy) return;
     setBusy(true);
     setError("");
     try {
@@ -33,32 +34,39 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
           </span>
           Staff only
         </p>
-        <h1 className="font-display login-wordmark">
-          Agent&nbsp;Board
-        </h1>
+        <h1 className="font-display login-wordmark">Agent&nbsp;Board</h1>
         <p className="login-tag">
           The board that types into your agents. Log in to take the shift.
         </p>
-        <Stack gap="sm">
-          <PasswordInput
-            label="Password"
-            value={pw}
-            onChange={(e) => setPw(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submit();
-            }}
-            aria-label="board password"
-          />
-          {error && <p className="hire-error">{error}</p>}
-          <button
-            type="button"
-            className="ab-btn hire-submit login-go"
-            onClick={submit}
-            disabled={busy}
-          >
-            {busy ? "Checking…" : "Sign in"}
-          </button>
-        </Stack>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void submit();
+          }}
+        >
+          <Stack gap="sm">
+            <PasswordInput
+              label="Password"
+              value={pw}
+              onChange={(e) => setPw(e.currentTarget.value)}
+              autoComplete="current-password"
+              disabled={busy}
+              aria-label="board password"
+            />
+            {error && (
+              <p className="hire-error" role="alert">
+                {error}
+              </p>
+            )}
+            <button
+              type="submit"
+              className="ab-btn hire-submit login-go"
+              disabled={busy}
+            >
+              {busy ? "Checking…" : "Sign in"}
+            </button>
+          </Stack>
+        </form>
       </div>
     </main>
   );

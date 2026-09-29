@@ -1,10 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Modal, ScrollArea, Tabs } from "@mantine/core";
 import type { Agent, ChatRow } from "../types";
 import { api } from "../api";
 import { AnswerCard } from "./AnswerCard";
-import { TerminalModal } from "./TerminalModal";
+const TerminalModal = lazy(() =>
+  import("./TerminalModal").then((module) => ({
+    default: module.TerminalModal,
+  })),
+);
 import { Composer } from "./Composer";
+import { statusLamp } from "./TicketCard";
 
 function ChatThread({ rows }: { rows: ChatRow[] }) {
   return (
@@ -13,7 +18,7 @@ function ChatThread({ rows }: { rows: ChatRow[] }) {
         if (r._fold) {
           return (
             <p key={i} className="chat-fold mono">
-              {r._fold}
+              {r._fold === "tool" ? r.tool || "tool" : r._fold}
               {r.path ? ` ${r.path}` : ""}
               {r.command ? ` $ ${r.command.slice(0, 80)}` : ""}
               {r.subagent_type ? ` [${r.subagent_type}]` : ""}
@@ -34,10 +39,7 @@ function ChatThread({ rows }: { rows: ChatRow[] }) {
             <span className="chat-who">
               {isAnswer ? "question" : isUser ? "you" : "agent"}
             </span>
-            <p
-              className="chat-text"
-              data-testid={`chat-${r.kind}`}
-            >
+            <p className="chat-text" data-testid={`chat-${r.kind}`}>
               {r.answer || r.text}
             </p>
           </div>
@@ -48,11 +50,20 @@ function ChatThread({ rows }: { rows: ChatRow[] }) {
 }
 
 function CodeChanges({ agent }: { agent: Agent }) {
-  const [diff, setDiff] = useState<{ title: string; body: string } | null>(null);
+  const [diff, setDiff] = useState<{ title: string; body: string } | null>(
+    null,
+  );
+  const [error, setError] = useState("");
   const g = agent.git;
-  if (!g) return <p className="panel-empty">No git repository for this agent.</p>;
+  if (!g)
+    return <p className="panel-empty">No git repository for this agent.</p>;
   return (
     <div className="panel-stack">
+      {error && (
+        <p className="hire-error" role="alert">
+          {error}
+        </p>
+      )}
       <div className="branch-bar">
         <span className="branch-name mono">
           {g.branch}
@@ -62,7 +73,9 @@ function CodeChanges({ agent }: { agent: Agent }) {
           {g.ahead != null && <span className="park-chip">↑{g.ahead}</span>}
           {g.behind != null && <span className="park-chip">↓{g.behind}</span>}
           {g.unpushed_commits != null && (
-            <span className={g.unpushed_commits ? "park-chip is-warn" : "park-chip"}>
+            <span
+              className={g.unpushed_commits ? "park-chip is-warn" : "park-chip"}
+            >
               {g.unpushed_commits} unpushed
             </span>
           )}
@@ -70,7 +83,9 @@ function CodeChanges({ agent }: { agent: Agent }) {
       </div>
 
       <h3 className="panel-h">Changed files</h3>
-      <p className="panel-note">Read-only. The board never writes to your repo.</p>
+      <p className="panel-note">
+        Read-only. The board never writes to your repo.
+      </p>
       <ul className="file-list">
         {g.files.map((f) => (
           <li key={f.path}>
@@ -80,7 +95,13 @@ function CodeChanges({ agent }: { agent: Agent }) {
               onClick={() =>
                 api
                   .diff(g.repo, { path: f.path })
-                  .then((r) => setDiff({ title: f.path, body: r.diff }))
+                  .then((r) => {
+                    setError("");
+                    setDiff({ title: f.path, body: r.diff });
+                  })
+                  .catch(() =>
+                    setError("Unable to load the file diff. Try again."),
+                  )
               }
             >
               <span className="file-path mono">
@@ -109,13 +130,21 @@ function CodeChanges({ agent }: { agent: Agent }) {
               onClick={() =>
                 api
                   .diff(g.repo, { sha: c.sha })
-                  .then((r) => setDiff({ title: c.short, body: r.diff }))
+                  .then((r) => {
+                    setError("");
+                    setDiff({ title: c.short, body: r.diff });
+                  })
+                  .catch(() =>
+                    setError("Unable to load the commit diff. Try again."),
+                  )
               }
             >
               <span className="file-path">
                 <span className="mono commit-sha">{c.short}</span> {c.subject}
               </span>
-              <span className={c.pushed ? "park-chip is-ok" : "park-chip is-warn"}>
+              <span
+                className={c.pushed ? "park-chip is-ok" : "park-chip is-warn"}
+              >
                 {c.pushed ? "pushed" : "local"}
               </span>
             </button>
@@ -135,7 +164,14 @@ function CodeChanges({ agent }: { agent: Agent }) {
               Close
             </button>
           </div>
-          <ScrollArea h={280}>
+          <ScrollArea
+            h={280}
+            viewportProps={{
+              tabIndex: 0,
+              role: "region",
+              "aria-label": "File diff",
+            }}
+          >
             <pre className="diff-body">{diff.body || "(empty)"}</pre>
           </ScrollArea>
         </div>
@@ -144,9 +180,15 @@ function CodeChanges({ agent }: { agent: Agent }) {
   );
 }
 
-function Workflow({ agent }: { agent: Agent }) {
+function Workflow({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
+  const [error, setError] = useState("");
   return (
     <div className="panel-stack">
+      {error && (
+        <p className="hire-error" role="alert">
+          {error}
+        </p>
+      )}
       {agent.alerts.length === 0 && (
         <p className="panel-empty">No skipped steps for this agent.</p>
       )}
@@ -157,14 +199,30 @@ function Workflow({ agent }: { agent: Agent }) {
             <button
               type="button"
               className="ab-btn board-mini"
-              onClick={() => api.remind(a.pane).then(() => undefined)}
+              disabled={readOnly}
+              onClick={() =>
+                api
+                  .remind(a.pane)
+                  .then(() => setError(""))
+                  .catch(() =>
+                    setError("Unable to remind this agent. Try again."),
+                  )
+              }
             >
               Remind agent
             </button>
             <button
               type="button"
               className="ab-btn board-mini"
-              onClick={() => api.dismiss(a.key).then(() => undefined)}
+              disabled={readOnly}
+              onClick={() =>
+                api
+                  .dismiss(a.key)
+                  .then(() => setError(""))
+                  .catch(() =>
+                    setError("Unable to dismiss the alert. Try again."),
+                  )
+              }
             >
               Dismiss
             </button>
@@ -196,12 +254,42 @@ function Safety({ agent }: { agent: Agent }) {
         </div>
         <div>
           <dt>Commits on no remote</dt>
-          <dd>{g && g.has_remote ? (g.unpushed_commits ?? 0) : "none"}</dd>
+          <dd>
+            {g
+              ? g.has_remote
+                ? (g.unpushed_commits ?? "unknown")
+                : "no remote configured"
+              : "no repo"}
+          </dd>
         </div>
         <div>
           <dt>Model</dt>
           <dd>{String(agent.status?.model ?? "not reported")}</dd>
         </div>
+        {status.tokens_used != null && (
+          <div>
+            <dt>Tokens used</dt>
+            <dd>{Number(status.tokens_used).toLocaleString()}</dd>
+          </div>
+        )}
+        {status.tokens_input != null && (
+          <div>
+            <dt>Input tokens</dt>
+            <dd>{Number(status.tokens_input).toLocaleString()}</dd>
+          </div>
+        )}
+        {status.tokens_output != null && (
+          <div>
+            <dt>Output tokens</dt>
+            <dd>{Number(status.tokens_output).toLocaleString()}</dd>
+          </div>
+        )}
+        {status.cost != null && (
+          <div>
+            <dt>Session cost</dt>
+            <dd>${Number(status.cost).toFixed(4)}</dd>
+          </div>
+        )}
         <div>
           <dt>Context used</dt>
           <dd>
@@ -241,55 +329,104 @@ function Safety({ agent }: { agent: Agent }) {
 
 export function AgentPanel({
   pane,
+  readOnly = false,
   onClose,
 }: {
   pane: string | null;
+  readOnly?: boolean;
   onClose: () => void;
 }) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [termOpen, setTermOpen] = useState(false);
   const [fireOpen, setFireOpen] = useState(false);
   const [fireMsg, setFireMsg] = useState("");
+  const [fireBusy, setFireBusy] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const mounted = useRef(false);
+  const loading = useRef(false);
   const timer = useRef<number | null>(null);
 
   async function load() {
-    if (!pane) return;
+    if (!pane || loading.current) return;
+    loading.current = true;
     try {
       const a = await api.agent(pane);
+      if (!mounted.current) return;
+      if (a.error) throw new Error(a.error);
       setAgent(a);
+      setLoadError("");
     } catch {
-      setAgent(null);
+      if (mounted.current)
+        setLoadError(
+          "Unable to refresh this agent. Your draft is kept. Try again.",
+        );
+    } finally {
+      loading.current = false;
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     setAgent(null);
     load();
     if (timer.current) window.clearInterval(timer.current);
     timer.current = window.setInterval(load, 4000);
     return () => {
+      mounted.current = false;
       if (timer.current) window.clearInterval(timer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pane]);
 
-  if (!pane || !agent) return null;
+  if (!pane) return null;
+  if (!agent)
+    return (
+      <section className="ab-panel agent-panel" aria-label="agent panel">
+        <p role="status">{loadError || "Loading agent…"}</p>
+        {loadError && (
+          <button className="ab-btn" onClick={() => void load()}>
+            Retry
+          </button>
+        )}
+        <button className="ab-btn" onClick={onClose}>
+          Close
+        </button>
+      </section>
+    );
 
+  const runtime = statusLamp(
+    agent.agent_status || "unknown",
+    !!agent.needs_user,
+  );
   return (
     <section
       className="ab-panel agent-panel"
       aria-label={`agent panel ${agent.name}`}
     >
+      {loadError && (
+        <p role="alert">
+          {loadError}{" "}
+          <button className="ab-btn" onClick={() => void load()}>
+            Retry
+          </button>
+        </p>
+      )}
+      {fireMsg && !fireOpen && <p role="status">{fireMsg}</p>}
       <header className="panel-head">
         <div className="panel-id">
-          <span className="font-display panel-name">{agent.name}</span>
+          <span className="panel-name">{agent.name}</span>
           <span className="panel-kind">{agent.kind}</span>
           <span className="panel-pane mono">{agent.pane}</span>
+          <span className="panel-runtime">
+            <span className={`lamp ${runtime.cls}`} aria-hidden />
+            {runtime.label}
+          </span>
         </div>
         <div className="panel-actions">
           <button
             type="button"
             className="ab-btn board-mini"
+            disabled={readOnly}
             onClick={() => setTermOpen(true)}
           >
             Open terminal
@@ -297,6 +434,7 @@ export function AgentPanel({
           <button
             type="button"
             className="ab-btn board-mini is-danger"
+            disabled={readOnly}
             onClick={() => setFireOpen(true)}
           >
             Fire agent
@@ -319,8 +457,8 @@ export function AgentPanel({
         centered
       >
         <p>
-          Close {agent.name}&apos;s pane? This stops the {agent.kind} process. The
-          agent stays rehirable for 24 hours.
+          Close {agent.name}&apos;s pane? This stops the {agent.kind} process.
+          The agent stays rehirable for 24 hours.
         </p>
         <p className="panel-note">
           If this agent owns a worktree, it is removed too — unless it has
@@ -338,34 +476,70 @@ export function AgentPanel({
           <button
             type="button"
             className="ab-btn board-mini is-danger"
-            onClick={() => {
-              api.fire(agent.pane).then((r) => {
-                setFireOpen(false);
-                if (r && r.worktree_skip) {
-                  setFireMsg(`Worktree kept: ${r.worktree_skip}`);
-                  load();
+            disabled={fireBusy}
+            onClick={async () => {
+              if (fireBusy) return;
+              setFireBusy(true);
+              setFireMsg("");
+              try {
+                const result = await api.fire(agent.pane);
+                if (result.worktree_skip) {
+                  setFireMsg(
+                    `Agent stopped. Worktree kept: ${result.worktree_skip}`,
+                  );
                 } else {
+                  setFireOpen(false);
                   onClose();
                 }
-              });
+              } catch (e) {
+                setFireMsg(
+                  e instanceof Error ? e.message : "Unable to stop the agent.",
+                );
+              } finally {
+                setFireBusy(false);
+              }
             }}
           >
-            Fire
+            {fireBusy ? "Stopping…" : "Fire"}
           </button>
         </div>
       </Modal>
 
-      <TerminalModal
-        pane={agent.pane}
-        name={agent.name}
-        opened={termOpen}
-        onClose={() => setTermOpen(false)}
-      />
+      {termOpen && (
+        <Suspense fallback={<p role="status">Loading terminal…</p>}>
+          <TerminalModal
+            pane={agent.pane}
+            name={agent.name}
+            opened={termOpen}
+            onClose={() => setTermOpen(false)}
+          />
+        </Suspense>
+      )}
 
       {agent.ask && (
-        <div className="panel-ask">
-          <AnswerCard pane={agent.pane} ask={agent.ask} onDone={load} />
-        </div>
+        <fieldset className="panel-ask" disabled={readOnly}>
+          <AnswerCard
+            key={JSON.stringify([
+              agent.pane,
+              agent.ask.question,
+              agent.ask.kind,
+              agent.ask.multi,
+              agent.ask.tabs,
+              agent.ask.options.map(
+                ({ number, label, description, kind, preview }) => [
+                  number,
+                  label,
+                  description,
+                  kind,
+                  preview,
+                ],
+              ),
+            ])}
+            pane={agent.pane}
+            ask={agent.ask}
+            onDone={load}
+          />
+        </fieldset>
       )}
 
       <Tabs defaultValue="chat" className="panel-tabs">
@@ -377,14 +551,33 @@ export function AgentPanel({
         </Tabs.List>
 
         <Tabs.Panel value="chat" pt="sm">
-          <ScrollArea h={360}>
+          <ScrollArea
+            h={360}
+            viewportProps={{
+              tabIndex: 0,
+              role: "region",
+              "aria-label": "Chat history",
+            }}
+          >
             <ChatThread rows={agent.chat} />
           </ScrollArea>
-          <Composer pane={agent.pane} onSent={load} />
+          <Composer
+            key={agent.pane}
+            pane={agent.pane}
+            onSent={load}
+            readOnly={readOnly}
+          />
           {agent.screen_tail && agent.screen_tail.length > 0 && (
             <div className="screen-tail">
               <h3 className="panel-h">Live screen (fallback)</h3>
-              <ScrollArea h={150}>
+              <ScrollArea
+                h={150}
+                viewportProps={{
+                  tabIndex: 0,
+                  role: "region",
+                  "aria-label": "Live terminal feedback",
+                }}
+              >
                 <pre className="diff-body">
                   {agent.screen_tail.slice(-30).join("\n")}
                 </pre>
@@ -397,7 +590,7 @@ export function AgentPanel({
           <CodeChanges agent={agent} />
         </Tabs.Panel>
         <Tabs.Panel value="workflow" pt="sm">
-          <Workflow agent={agent} />
+          <Workflow agent={agent} readOnly={readOnly} />
         </Tabs.Panel>
         <Tabs.Panel value="safety" pt="sm">
           <Safety agent={agent} />

@@ -63,6 +63,7 @@ export type Worktree = {
 };
 
 export type Board = {
+  read_only?: boolean;
   tickets: Ticket[];
   agents: AgentChipData[];
   stages: string[];
@@ -76,6 +77,7 @@ export type Board = {
 };
 
 export type ChatRow = {
+  tool?: string;
   kind: string;
   text?: string;
   path?: string;
@@ -89,6 +91,9 @@ export type ChatRow = {
 };
 
 export type Agent = {
+  agent_status?: string;
+  needs_user?: boolean;
+  updated_at?: number;
   pane: string;
   name: string;
   kind: string;

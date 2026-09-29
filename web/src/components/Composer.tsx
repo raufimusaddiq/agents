@@ -1,7 +1,43 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Textarea } from "@mantine/core";
 import type { MenuItem } from "../types";
 import { api } from "../api";
+
+type DraftState = {
+  msg: string;
+  busy: boolean;
+  error: string;
+  syncError: boolean;
+};
+type Draft = {
+  state: DraftState;
+  mirrored: string;
+  failed: boolean;
+  queue: Promise<void>;
+  listeners: Set<() => void>;
+};
+
+// A native composer survives closing its detail panel. Keep the corresponding
+// draft and queue in memory too, so reopening cannot append to forgotten text.
+const drafts = new Map<string, Draft>();
+function draftFor(pane: string): Draft {
+  let draft = drafts.get(pane);
+  if (!draft) {
+    draft = {
+      state: { msg: "", busy: false, error: "", syncError: false },
+      mirrored: "",
+      failed: false,
+      queue: Promise.resolve(),
+      listeners: new Set(),
+    };
+    drafts.set(pane, draft);
+  }
+  return draft;
+}
+function updateDraft(draft: Draft, changes: Partial<DraftState>) {
+  draft.state = { ...draft.state, ...changes };
+  for (const listener of draft.listeners) listener();
+}
 
 /**
  * Chat composer with native trigger support.
@@ -14,17 +50,25 @@ import { api } from "../api";
  */
 export function Composer({
   pane,
+  readOnly = false,
   onSent,
 }: {
   pane: string;
+  readOnly?: boolean;
   onSent: () => void;
 }) {
-  const [msg, setMsg] = useState("");
-  const [busy, setBusy] = useState(false);
+  const draft = draftFor(pane);
+  const { msg, busy, error, syncError } = useSyncExternalStore(
+    (listener) => {
+      draft.listeners.add(listener);
+      return () => {
+        draft.listeners.delete(listener);
+      };
+    },
+    () => draft.state,
+  );
   const [items, setItems] = useState<MenuItem[]>([]);
-  const [error, setError] = useState("");
   const poll = useRef<number | null>(null);
-  const mirrored = useRef("");
   const taRef = useRef<HTMLTextAreaElement | null>(null);
 
   const trigger = (() => {
@@ -34,23 +78,37 @@ export function Composer({
 
   // Mirror edits into the agent so its native menu reflects what we typed.
   // A single serialized queue keeps deltas in order without overlapping calls.
-  const queue = useRef<Promise<void>>(Promise.resolve());
   function mirror(next: string) {
-    const prev = mirrored.current;
+    const prev = draft.mirrored;
     if (next === prev) return;
+    const before = Array.from(prev);
+    const after = Array.from(next);
     let i = 0;
-    while (i < prev.length && i < next.length && prev[i] === next[i]) i++;
-    const removed = prev.length - i;
-    const added = next.slice(i);
-    mirrored.current = next;
-    queue.current = queue.current.then(async () => {
+    while (i < before.length && i < after.length && before[i] === after[i]) i++;
+    const removed = before.length - i;
+    const added = after.slice(i).join("");
+    draft.mirrored = next;
+    updateDraft(draft, { msg: next });
+    draft.queue = draft.queue.then(async () => {
+      if (draft.failed) return;
       try {
-        for (let r = 0; r < removed; r++) {
-          await api.keys(pane, ["backspace"]);
+        for (let r = 0; r < removed; r += 100) {
+          await api.keys(
+            pane,
+            Array(Math.min(100, removed - r)).fill("backspace"),
+          );
         }
-        if (added) await api.type(pane, added);
+        const characters = Array.from(added);
+        for (let start = 0; start < characters.length; start += 2000) {
+          await api.type(pane, characters.slice(start, start + 2000).join(""));
+        }
       } catch {
-        /* the agent may be mid-turn; the user can retry */
+        draft.failed = true;
+        updateDraft(draft, {
+          syncError: true,
+          error:
+            "Input could not be synchronized. Check the agent terminal before continuing.",
+        });
       }
     });
   }
@@ -61,17 +119,19 @@ export function Composer({
       setItems([]);
       return;
     }
+    let active = true;
     const load = async () => {
       try {
         const r = await api.menu(pane);
-        setItems(r.items.filter((i) => i.trigger === trigger.ch));
+        if (active) setItems(r.items.filter((i) => i.trigger === trigger.ch));
       } catch {
-        setItems([]);
+        if (active) setItems([]);
       }
     };
     const t = window.setTimeout(load, 350);
     poll.current = window.setInterval(load, 900);
     return () => {
+      active = false;
       window.clearTimeout(t);
       if (poll.current) window.clearInterval(poll.current);
     };
@@ -79,30 +139,36 @@ export function Composer({
   }, [pane, trigger?.ch, trigger?.query]);
 
   async function send() {
-    if (!msg.trim()) return;
-    setBusy(true);
-    setError("");
+    if (readOnly || draft.state.busy || draft.failed || !draft.state.msg.trim()) return;
+    updateDraft(draft, { busy: true, error: "" });
     try {
       // Wait for any pending keystrokes to land, then submit. The text is
       // already in the agent's buffer, so Send is only Enter.
-      await queue.current;
+      await draft.queue;
+      if (draft.failed)
+        throw new Error(
+          "Input synchronization failed. Check the agent terminal.",
+        );
       await api.keys(pane, ["enter"]);
-      setMsg("");
-      mirrored.current = "";
+      updateDraft(draft, { msg: "" });
+      draft.mirrored = "";
       setItems([]);
       onSent();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "failed");
+      updateDraft(draft, { error: e instanceof Error ? e.message : "failed" });
     } finally {
-      setBusy(false);
+      updateDraft(draft, { busy: false });
     }
   }
 
   async function pick(item: MenuItem) {
     // Replace the typed partial token; mirror the edit, keep editing.
-    const next = msg.replace(/([/@$])[^\s]*$/, item.label + " ");
+    if (draft.state.busy || draft.failed) return;
+    const label = item.label.startsWith(item.trigger)
+      ? item.label
+      : item.trigger + item.label;
+    const next = msg.replace(/([/@$])[^\s]*$/, label + " ");
     mirror(next);
-    setMsg(next);
     setItems([]);
     taRef.current?.focus();
   }
@@ -110,21 +176,7 @@ export function Composer({
   // Keep the agent's buffer in sync when the field is cleared or replaced
   // wholesale (e.g. select-all + delete, or the Send reset).
   function onChange(v: string) {
-    if (v === "") {
-      // Drain whatever is in the agent's composer.
-      const n = mirrored.current.length;
-      mirrored.current = "";
-      queue.current = queue.current.then(async () => {
-        try {
-          for (let i = 0; i < n; i++) await api.keys(pane, ["backspace"]);
-        } catch {
-          /* ignore */
-        }
-      });
-    } else {
-      mirror(v);
-    }
-    setMsg(v);
+    mirror(v);
   }
 
   return (
@@ -136,6 +188,7 @@ export function Composer({
               <button
                 type="button"
                 className="menu-row"
+                disabled={readOnly || busy || syncError}
                 onClick={() => pick(i)}
                 aria-label={`insert ${i.label}`}
               >
@@ -156,6 +209,7 @@ export function Composer({
           maxRows={5}
           placeholder="Message the agent — / @ $ work as in the harness"
           value={msg}
+          disabled={readOnly || busy || syncError}
           onChange={(e) => {
             onChange(e.currentTarget.value);
           }}
@@ -170,13 +224,17 @@ export function Composer({
         <button
           type="button"
           className="ab-btn hire-submit"
-          disabled={busy}
+          disabled={readOnly || busy || syncError || !msg.trim()}
           onClick={send}
         >
           {busy ? "Sending…" : "Send"}
         </button>
       </div>
-      {error && <p className="hire-error">{error}</p>}
+      {error && (
+        <p className="hire-error" role="alert">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

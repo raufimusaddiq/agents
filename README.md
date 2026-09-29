@@ -12,6 +12,9 @@ behind one adapter interface.
 
 ## Quick start
 
+Use native Node.js and npm in the Linux environment; Windows npm through WSL
+cannot run this build correctly. Python 3 and herdr must also be available.
+
 ```bash
 ./install.sh          # password, front-end build, systemd user unit + linger
 ./run.sh              # or start it in the foreground
@@ -200,15 +203,41 @@ them (e.g. `adapters/claude.py`, `adapters/codex.py`, `adapters/opencode.py`).
 
 ## Testing
 
+The isolated audit suites do not require a herdr session and never send input to
+live agents:
+
+```bash
+npm ci
+npm ci --prefix web
+npm test                       # HTTP, streaming, workflow and safety regression tests
+npm run build
+npm run test:ui                # self-contained fixture server, desktop/mobile + both themes
+```
+
+For a read-only check of the revised board against an existing herdr session:
+
+```bash
+python3 tests/live_server.py    # separate candidate at 8793, temporary state, webhooks off
+npm run test:live               # candidate password is board-test-pw
+```
+
+`BOARD_URL` and `BOARD_PW` select another server for `test:live`.
+`AUDIT_DIST` supplies a build directory to `test:ui` and `--dist` does the same
+for `live_server.py`. The candidate server rejects agent mutations and terminal connections, and does not replace the installed service.
+Audit findings and verification are recorded in [docs/audit.md](docs/audit.md).
+
+The older harness lifecycle suites create agents and exercise login lockout.
+Point them at a disposable board server with `BOARD_URL` before running them:
+
 ```bash
 # browser system libs (no root): extract .deb libs into ~/.local/lib/agent-board
 # or, with sudo: npx playwright-core install-deps chromium
 
 node tests/a11y.mjs                 # axe, both themes, 1280px + 375px
 node tests/smoke.mjs                # screenshots
-E2E_KIND=opencode node tests/e2e.mjs
-E2E_KIND=codex   node tests/e2e.mjs
-E2E_KIND=claude  node tests/e2e.mjs
+BOARD_URL=http://127.0.0.1:8794 E2E_KIND=opencode node tests/e2e.mjs
+BOARD_URL=http://127.0.0.1:8794 E2E_KIND=codex   node tests/e2e.mjs
+BOARD_URL=http://127.0.0.1:8794 E2E_KIND=claude  node tests/e2e.mjs
 node tests/cpu.mjs                  # browser-tab idle CPU
 ```
 

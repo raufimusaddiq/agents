@@ -39,7 +39,7 @@ export function CardView({
       }}
     >
       <header className="wo-head">
-        <span className="wo-name font-display">{card.name}</span>
+        <span className="wo-name">{card.name}</span>
         <span
           className="wo-kind"
           style={{ color: KIND_VAR[card.kind] || "var(--ab-dim)" }}

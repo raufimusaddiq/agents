@@ -20,6 +20,7 @@ MEASURED resume: `codex resume <SESSION_ID>`.
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -68,7 +69,7 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
             con = sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True)
             con.row_factory = sqlite3.Row
             r = con.execute(
-                "SELECT id,rollout_path,cwd,title,model FROM threads WHERE id=? LIMIT 1",
+                "SELECT id,rollout_path,cwd,title,model,tokens_used FROM threads WHERE id=? LIMIT 1",
                 (session_id,)).fetchone()
             con.close()
             return dict(r) if r else None
@@ -195,6 +196,10 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
                                   detail=detail, kind=kind,
                                   selected=bool(m.group(1))))
         return items
+
+    def session_status(self, session_id: str) -> dict:
+        row = self.session_row(session_id) or {}
+        return {key: row[key] for key in ("model", "tokens_used") if row.get(key) is not None}
 
     def status_line(self, screen_lines: list[str]) -> dict:
         # MEASURED: Codex prints "tokens used" and a NNNN number, no percentages.
@@ -324,12 +329,15 @@ def _parse_codex(obj: dict) -> list[Event]:
 
 def _codex_tool(p: dict, ts: str) -> list[Event]:
     name = p.get("name", "")
-    args = p.get("arguments") or p.get("action") or {}
+    raw_args = p.get("arguments") or p.get("input") or p.get("action") or {}
+    args = raw_args
     if isinstance(args, str):
         try:
             args = json.loads(args)
         except ValueError:
             args = {}
+    if not isinstance(args, dict):
+        args = {}
     out: list[Event] = []
     # MEASURED: local_shell_call action.type == "exec", action.command is a list.
     if p.get("type") == "local_shell_call":
@@ -340,13 +348,35 @@ def _codex_tool(p: dict, ts: str) -> list[Event]:
         out.append(Event(kind="bash", ts=ts, command=str(cmd or ""),
                          tool="shell"))
         return out
-    lowered = name.lower()
-    if lowered in ("shell", "bash", "exec", "local_shell"):
+    lowered = name.lower().split(".")[-1]
+    if lowered == "exec" and isinstance(raw_args, str) and not args:
+        # Measured live: custom_tool_call exec.input is JavaScript that invokes
+        # tools.exec_command({cmd: "..."}). Decode literals, never execute code.
+        string = r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'"
+        skip = string + r"|`(?:\\.|[^`\\])*`|//[^\n]*|/\*[\s\S]*?\*/"
+        pattern = skip + r"|exec_command\s*\(\s*\{\s*cmd\s*:\s*(?P<command>" + string + ")"
+        for match in re.finditer(pattern, raw_args):
+            literal = match.group("command")
+            if literal is None:
+                continue
+            try:
+                command = json.loads(literal) if literal.startswith('"') else ast.literal_eval(literal)
+            except (ValueError, SyntaxError):
+                continue
+            out.append(Event(kind="bash", ts=ts, command=command, tool="shell"))
+        return out or [Event(kind="tool", ts=ts, tool=name)]
+    if lowered in ("shell", "bash", "exec", "exec_command", "shell_command", "local_shell"):
         cmd = args.get("command") or args.get("cmd") or ""
         if isinstance(cmd, list):
             cmd = " ".join(cmd)
-        out.append(Event(kind="bash", ts=ts, command=str(cmd), tool="shell"))
+        if cmd:
+            out.append(Event(kind="bash", ts=ts, command=str(cmd), tool="shell"))
+        else:
+            out.append(Event(kind="tool", ts=ts, tool=name))
     elif lowered in ("apply_patch", "edit", "write"):
         path = args.get("file_path") or args.get("path") or ""
-        out.append(Event(kind="edit", ts=ts, path=str(path), tool=name))
+        patch = raw_args if isinstance(raw_args, str) else args.get("input", "")
+        paths = re.findall(r"^\*\*\* (?:Update|Add|Delete) File: (.+)$", patch, re.M) if isinstance(patch, str) else []
+        for changed in paths or ([path] if path else []):
+            out.append(Event(kind="edit", ts=ts, path=str(changed), tool=name))
     return out

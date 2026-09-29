@@ -5,11 +5,12 @@ cd "$(dirname "$0")"
 PORT="${AGENT_BOARD_PORT:-8792}"
 
 if [ ! -d web/dist ] && [ -d web ]; then
-  if command -v npm >/dev/null 2>&1; then
+  if command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1 && [ "$(node -p 'process.platform')" != "win32" ]; then
     echo "Building front end (first run)..."
-    (cd web && npm install --no-audit --no-fund && npm run build)
+    (cd web && npm ci --no-audit --no-fund && npm run build)
   else
-    echo "npm not found: front end not built." >&2
+    echo "Native Node.js and npm are required to build the front end." >&2
+    exit 1
   fi
 fi
 
