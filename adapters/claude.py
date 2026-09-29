@@ -106,20 +106,28 @@ class ClaudeAdapter(Adapter):
     def parse_prompt(self, screen_lines: list[str]) -> Ask | None:
         lines = [PREVIEW_CUT_RE.sub("", ln) for ln in screen_lines]
         text = "\n".join(lines)
-        joined = text.lower()
-        if FOOTER_SELECT not in text and FOOTER_CONFIRM not in text \
-                and FOOTER_CANCEL not in text and not any(m in text for m in NO_DIGIT_MARKERS):
+        has_footer = (FOOTER_SELECT in text or FOOTER_CONFIRM in text
+                      or FOOTER_CANCEL in text)
+        has_trust = any(m in text for m in NO_DIGIT_MARKERS)
+        # Measured: Claude renders some menus (e.g. login method) with numbered
+        # options and a caret but no footer. Treat a caret + numbered option as
+        # a prompt too, so startup questions still surface as needs-you.
+        has_numbered_caret = any(
+            OPT_RE.match(ln) and OPT_RE.match(ln).group(1) for ln in lines)
+        if not (has_footer or has_trust or has_numbered_caret):
             return None
 
         options: list[Option] = []
         multi = False
-        question_lines: list[str] = []
-        tabs = TAB_RE.findall(text)
-        if tabs:
-            question_lines.append(" ".join(tabs))
-        for ln in lines:
+        # Track which line index each option starts at, so the question text is
+        # taken from the lines immediately above the first option (measured:
+        # Claude draws banners/logs above the menu; those are not the question).
+        first_opt_idx = None
+        for idx, ln in enumerate(lines):
             m = OPT_RE.match(ln)
             if m:
+                if first_opt_idx is None:
+                    first_opt_idx = idx
                 caret, num, label = m.group(1), int(m.group(2)), m.group(3).strip()
                 options.append(Option(number=num, label=label,
                                       selected=bool(caret)))
@@ -142,19 +150,18 @@ class ClaudeAdapter(Adapter):
                 last = options[-1]
                 if not PREVIEW_CUT_RE.search(ln) and last.number is not None:
                     last.description = (last.description + " " + s).strip()
-            elif s and not options and not _is_footer(s):
-                question_lines.append(s)
 
         if not options:
             # trust dialog / chat-about-this: arrows + Enter, no digits
             kind = "trust" if any(m in text for m in NO_DIGIT_MARKERS) else "permission"
-            return Ask(question="\n".join(q.strip() for q in question_lines if q.strip()),
-                       options=[], multi=False, kind=kind, raw=text)
+            ctx = _question_text(lines, len(lines))
+            return Ask(question=ctx, options=[], multi=False, kind=kind, raw=text)
         submit = ""
         for o in options:
             if o.number is None and o.label.lower().startswith("submit"):
                 submit = o.label
-        return Ask(question="\n".join(q.strip() for q in question_lines if q.strip()),
+        tabs = TAB_RE.findall(text)
+        return Ask(question=_question_text(lines, first_opt_idx or 0),
                    options=options, multi=multi, submit_row=submit,
                    tabs=tabs, kind="question", raw=text)
 
@@ -241,6 +248,21 @@ class ClaudeAdapter(Adapter):
 
 def _is_footer(s: str) -> bool:
     return any(k in s for k in (FOOTER_SELECT, FOOTER_CONFIRM, FOOTER_CANCEL))
+
+
+def _question_text(lines: list[str], first_opt_idx: int) -> str:
+    """Question text = up to 4 non-empty lines immediately above the options."""
+    if first_opt_idx <= 0:
+        return ""
+    picked: list[str] = []
+    for ln in reversed(lines[:first_opt_idx]):
+        if ln.strip():
+            picked.append(ln.strip())
+        elif picked:
+            break
+        if len(picked) >= 4:
+            break
+    return "\n".join(reversed(picked))
 
 
 def _project_dirs():

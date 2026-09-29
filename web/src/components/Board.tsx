@@ -228,7 +228,14 @@ export function BoardView({
           >
             Only needs you
           </Button>
-          <Button size="xs" variant="light" color="gray" onClick={onToggleTheme}>
+          <Button
+            size="xs"
+            variant="light"
+            color="gray"
+            data-testid="theme-toggle"
+            aria-label="toggle theme"
+            onClick={onToggleTheme}
+          >
             {theme === "dark" ? "light" : "dark"}
           </Button>
           <Button

@@ -83,7 +83,14 @@ function App() {
   }, [load]);
 
   if (authed === false) {
-    return <Login onSuccess={() => setAuthed(true)} />;
+    return (
+      <Login
+        onSuccess={() => {
+          setAuthed(true);
+          load();
+        }}
+      />
+    );
   }
   if (!board) {
     return <div style={{ padding: 24 }}>Loading…</div>;

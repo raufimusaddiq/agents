@@ -1212,9 +1212,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if stored and verify_password(pw, stored):
             SESSIONS.clear_failures(ip)
             tok = SESSIONS.create()
-            cookie = (f"board_session={tok}; HttpOnly; Secure; "
-                      f"SameSite=Strict; Path=/; Max-Age="
-                      f"{cfg['auth']['session_hours'] * 3600}")
+            # Secure only when the request arrived over TLS (tunnel) or when a
+            # remote hostname is configured; otherwise a local http://127.0.0.1
+            # browser would refuse to store/send the cookie.
+            cfg2 = config()
+            secure = (self.headers.get("X-Forwarded-Proto") == "https"
+                      or bool(cfg2["remote"]["hostnames"]))
+            cookie = (f"board_session={tok}; HttpOnly; "
+                      f"{'Secure; ' if secure else ''}SameSite=Strict; Path=/; "
+                      f"Max-Age={cfg['auth']['session_hours'] * 3600}")
             data = json.dumps({"ok": True}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
