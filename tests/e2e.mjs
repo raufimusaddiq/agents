@@ -215,6 +215,16 @@ async function answerAsk(page, name) {
   });
   check("security: lockout -> 429", locked.status === 429, String(locked.status));
 
+  // Clear the lockout so the test never leaves the real user blocked. The
+  // server only allows this from localhost.
+  await fetch(`${BASE}/api/dev/reset_lockout`, { method: "POST" });
+  const afterReset = await fetch(`${BASE}/api/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password: PW }),
+  });
+  check("lockout clears after reset", afterReset.status === 200, String(afterReset.status));
+
   await browser.close();
 
   // ---- cleanup: close fixture panes/folders ----
