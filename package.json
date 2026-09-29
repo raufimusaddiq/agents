@@ -1,0 +1,25 @@
+{
+  "name": "agents",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/raufimusaddiq/agents.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/raufimusaddiq/agents/issues"
+  },
+  "homepage": "https://github.com/raufimusaddiq/agents#readme",
+  "dependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "playwright-core": "^1.63.0"
+  }
+}

@@ -153,6 +153,22 @@ def herdr(*args: str, timeout: float = 20.0) -> dict:
         raise HerdrError("bad_json", "herdr returned non-JSON", raw=out[:500])
 
 
+def herdr_text(*args: str, timeout: float = 20.0) -> str:
+    """Run a herdr command that returns plain text (e.g. `agent read`)."""
+    cfg = config()
+    cmd = ["herdr", "--session", cfg["herdr_session"], *args]
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True,
+                           timeout=timeout, env=_herdr_env())
+    except subprocess.TimeoutExpired:
+        raise HerdrError("timeout", f"herdr timed out: {' '.join(args)}")
+    except FileNotFoundError:
+        raise HerdrError("no_herdr", "herdr binary not found on PATH")
+    if p.returncode != 0:
+        raise HerdrError("herdr_error", p.stderr.strip() or "failed", raw=p.stderr)
+    return p.stdout
+
+
 def snapshot() -> dict:
     j = herdr("api", "snapshot")
     return j.get("result", {}).get("snapshot", {})
@@ -185,9 +201,9 @@ def read_screen(pane: str, lines: int = 60) -> list[str]:
     if not valid_pane(pane):
         raise HerdrError("bad_pane", "invalid pane id")
     lines = max(1, min(int(lines), 400))
-    j = herdr("agent", "read", pane, "--source", "recent",
-              "--lines", str(lines), timeout=15)
-    text = _extract_read_text(j)
+    # Measured 0.9.2: `agent read` prints plain text, not JSON.
+    text = herdr_text("agent", "read", pane, "--source", "recent",
+                      "--lines", str(lines), timeout=15)
     return text.splitlines()
 
 
@@ -548,48 +564,50 @@ def _norm_events(pane: str, events: list[AEvent]) -> list[dict]:
 def reconcile_agents() -> None:
     """Refresh agent records from a herdr snapshot.
 
-    Measured 0.9.2: agent fields live on snapshot.panes[] (agent_status, cwd,
-    name, terminal_title_stripped). snapshot.agents[] is a separate grouping.
+    Measured 0.9.2: agent identity lives in snapshot.agents[] (name, agent kind,
+    agent_session.value, agent_status, cwd, terminal_title_stripped). The
+    panes[] array carries raw panes; index it by pane_id for geometry/focus.
     """
     try:
         snap = snapshot()
     except HerdrError:
         return
-    panes = snap.get("panes", [])
+    panes = {p.get("pane_id"): p for p in snap.get("panes", [])}
     tabs = {t.get("tab_id"): t for t in snap.get("tabs", [])}
     workspaces = {w.get("workspace_id"): w for w in snap.get("workspaces", [])}
     seen = set()
     now = time.time()
     with STATE.lock:
-        for p in panes:
-            pane = p.get("pane_id", "")
+        for a in snap.get("agents", []):
+            pane = a.get("pane_id", "")
             if not valid_pane(pane):
                 continue
-            status = p.get("agent_status", "unknown")
-            name = p.get("name") or ""
-            kind = _detect_kind(p)
-            if not name and not kind:
-                continue
             seen.add(pane)
+            p = panes.get(pane, {})
+            sess = a.get("agent_session") or {}
             rec = STATE.agents.get(pane, {})
             rec.update({
                 "pane": pane,
-                "name": name or rec.get("name", ""),
-                "kind": kind or rec.get("kind", ""),
-                "cwd": p.get("cwd") or rec.get("cwd", ""),
-                "foreground_cwd": p.get("foreground_cwd", ""),
-                "tab_id": p.get("tab_id", ""),
-                "workspace_id": p.get("workspace_id", ""),
-                "agent_status": status,
-                "title": p.get("terminal_title_stripped", ""),
-                "focused": bool(p.get("focused")),
+                "name": a.get("name") or rec.get("name", ""),
+                "kind": a.get("agent") or rec.get("kind", ""),
+                "cwd": a.get("cwd") or p.get("cwd") or rec.get("cwd", ""),
+                "foreground_cwd": a.get("foreground_cwd", ""),
+                "tab_id": a.get("tab_id", ""),
+                "workspace_id": a.get("workspace_id", ""),
+                "agent_status": a.get("agent_status", "unknown"),
+                "title": a.get("terminal_title_stripped", ""),
+                "focused": bool(a.get("focused")),
+                "interactive_ready": bool(a.get("interactive_ready")),
                 "last_seen": now,
-                "tab_label": tabs.get(p.get("tab_id"), {}).get("label", ""),
-                "ws_label": workspaces.get(p.get("workspace_id"), {}).get("label", ""),
+                "tab_label": tabs.get(a.get("tab_id"), {}).get("label", ""),
+                "ws_label": workspaces.get(a.get("workspace_id"), {}).get("label", ""),
             })
-            sid = _session_id_for(pane)
+            sid = sess.get("value", "")
             if sid:
                 rec["session_id"] = sid
+            elif not rec.get("session_id"):
+                rec["session_id"] = _session_id_for(pane)
+            rec.setdefault("col_since", now)
             STATE.agents[pane] = rec
         # agents that vanished -> closed (rehirable)
         for pane in list(STATE.agents):
@@ -1067,7 +1085,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if not self._auth():
                 return self._deny()
             note_page_open()
-            pane = urllib.parse.parse_qs(p.url).get("pane", [""])[0]
+            pane = urllib.parse.parse_qs(p.query).get("pane", [""])[0]
             self._json(200, build_agent(pane))
             return
         if path == "/api/events":
@@ -1078,7 +1096,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/screen":
             if not self._auth():
                 return self._deny()
-            pane = urllib.parse.parse_qs(p.url).get("pane", [""])[0]
+            pane = urllib.parse.parse_qs(p.query).get("pane", [""])[0]
             if not valid_pane(pane):
                 self._json(400, {"error": "bad_pane"})
                 return
