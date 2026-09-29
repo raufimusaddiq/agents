@@ -185,6 +185,8 @@ ALLOWED_KEYS = {
     "enter", "backspace", "tab", "shift+tab", "up", "down", "left", "right",
     "esc", "escape", "space",
 }
+for _d in "0123456789":
+    ALLOWED_KEYS.add(_d)
 for _c in "abcdefghijklmnopqrstuvwxyz":
     ALLOWED_KEYS.add("ctrl+" + _c)
 
@@ -201,9 +203,16 @@ def read_screen(pane: str, lines: int = 60) -> list[str]:
     if not valid_pane(pane):
         raise HerdrError("bad_pane", "invalid pane id")
     lines = max(1, min(int(lines), 400))
-    # Measured 0.9.2: `agent read` prints plain text, not JSON.
-    text = herdr_text("agent", "read", pane, "--source", "recent",
-                      "--lines", str(lines), timeout=15)
+    # Measured 0.9.2: `agent read` prints plain text, not JSON. When the pane is
+    # not idle, `--source recent` can fail (alternate-screen history), so fall
+    # back to `--source visible` (measured: visible hides the status line only
+    # when scrolled up).
+    try:
+        text = herdr_text("agent", "read", pane, "--source", "recent",
+                          "--lines", str(lines), timeout=15)
+    except HerdrError:
+        text = herdr_text("agent", "read", pane, "--source", "visible",
+                          timeout=15)
     return text.splitlines()
 
 
@@ -1821,7 +1830,7 @@ def _selfcheck() -> None:
     assert not valid_pane("w1"), "missing pane half"
     assert not valid_pane("w1:p")
     assert not valid_pane("1:p1")
-    assert valid_keys(["enter", "esc", "up", "ctrl+c"])
+    assert valid_keys(["enter", "esc", "up", "ctrl+c", "1", "9"])
     assert not valid_keys(["home"]), "home is rejected by herdr"
     assert not valid_keys(["pageup"])
     assert not valid_keys(["rm"])
@@ -1916,6 +1925,15 @@ def _selfcheck() -> None:
     cx = CodexAdapter()
     assert cx.supports["resume"]
     assert cx.resume_args("abc") == ["resume", "abc"]
+    cxask = cx.parse_prompt([
+        "Continue only if you trust these files.",
+        "› 1. Trust and continue",
+        "  2. Back to Agent Command Center",
+        "  enter continue · esc back",
+    ])
+    assert cxask is not None and cxask.options[0].selected
+    assert cxask.options[0].label == "Trust and continue"
+    assert cx.plan_answer(cxask, 1)[0].keys == ["1"]
 
     # opencode adapter basics
     oc = OpencodeAdapter()
@@ -2003,7 +2021,10 @@ def main() -> None:
         print("WARNING: no password set. Run: python3 server.py --set-password <pw>")
 
     def stop(*_):
-        srv.shutdown()
+        # shutdown() blocks until serve_forever() returns; calling it directly
+        # from the signal handler in the same thread deadlocks. Run it in a
+        # daemon thread and let serve_forever() unwind.
+        threading.Thread(target=srv.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)

@@ -22,12 +22,20 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 
 from .base import Adapter, Ask, Event, Option, ScreenFallbackMixin, Step
 
 CODEX_DIR = os.path.expanduser("~/.codex")
 STATE_DB = os.path.join(CODEX_DIR, "state_5.sqlite")
+
+# Measured 0.159.0: Codex menus use "›" as the selected-row caret and render a
+# footer like "enter continue · esc back" (not Claude's "Enter to select").
+# Measured option row: "› 1. Trust and continue" / "  2. Back to ...".
+CX_OPT_RE = re.compile(r"^\s*(›|\*)?\s*(\d+)\.\s+(.*)$")
+CX_CARET_RE = re.compile(r"^\s*(›)\s+(\S.*)$")
+CX_FOOTER_RE = re.compile(r"(enter\s+\w+.*esc\s+\w+|esc\s+\w+.*enter\s+\w+)", re.I)
 
 
 class CodexAdapter(ScreenFallbackMixin, Adapter):
@@ -37,11 +45,11 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
     # are TUI-drawn (fall back to raw keys). No subagent concept observed.
     supports = {
         "transcript": True,
-        "prompts": False,
-        "status_line": False,
+        "prompts": True,
+        "status_line": True,
         "subagents": False,
         "resume": True,
-        "questions": False,
+        "questions": True,
     }
     notes = [
         "measured 0.159.0: sessions indexed in ~/.codex/state_5.sqlite table threads",
@@ -123,6 +131,65 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
         if m:
             out["model"] = m.group(1)
         return out
+
+    def parse_prompt(self, screen_lines: list[str]) -> Ask | None:
+        """Measured 0.159.0: trust/menu screens use '› N. Label' rows and a
+        footer like 'enter continue · esc back'. This is the startup trust
+        dialog and similar approval menus."""
+        text = "\n".join(screen_lines)
+        has_footer = bool(CX_FOOTER_RE.search(text))
+        options: list[Option] = []
+        first_idx = None
+        for i, ln in enumerate(screen_lines):
+            m = CX_OPT_RE.match(ln)
+            if m:
+                if first_idx is None:
+                    first_idx = i
+                options.append(Option(number=int(m.group(2)),
+                                      label=m.group(3).strip(),
+                                      selected=bool(m.group(1))))
+                continue
+            c = CX_CARET_RE.match(ln)
+            if c:
+                options.append(Option(number=None, label=c.group(2).strip(),
+                                      selected=True))
+        if not options and not has_footer:
+            return None
+        kind = "trust" if options and any(
+            "trust" in o.label.lower() for o in options) else "question"
+        q = _question_text(screen_lines, first_idx or len(screen_lines))
+        return Ask(question=q, options=options, multi=False,
+                   kind=kind if options else "permission", raw=text)
+
+    def plan_answer(self, ask: Ask, answer) -> list[Step]:
+        """Measured: Codex trust dialog accepts Enter on the selected row, or a
+        digit to pick then Enter. 'esc back' cancels. No preview-box nuance."""
+        if ask.kind in ("trust", "permission") and not ask.options:
+            return [Step(keys=["enter"])]
+        opt = answer.get("option") if isinstance(answer, dict) else answer
+        text = answer.get("text") if isinstance(answer, dict) else None
+        if opt is not None:
+            steps = [Step(keys=[str(opt)]), Step(keys=["enter"])]
+            if text:
+                steps += [Step(text=str(text)), Step(keys=["enter"])]
+            return steps
+        if text is not None:
+            return [Step(text=str(text)), Step(keys=["enter"])]
+        return [Step(keys=["enter"])]
+
+
+def _question_text(lines: list[str], first_opt_idx: int) -> str:
+    if first_opt_idx <= 0:
+        return ""
+    picked: list[str] = []
+    for ln in reversed(lines[:first_opt_idx]):
+        if ln.strip():
+            picked.append(ln.strip())
+        elif picked:
+            break
+        if len(picked) >= 4:
+            break
+    return "\n".join(reversed(picked))
 
 
 def _parse_codex(obj: dict) -> list[Event]:
