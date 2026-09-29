@@ -375,6 +375,7 @@ export function BoardView({
     typeof window !== "undefined" ? window.innerWidth >= 900 : true,
   );
   const [hireOpen, setHireOpen] = useState(false);
+  const [closedOpen, setClosedOpen] = useState(false);
   const [hirePreset, setHirePreset] =
     useState<{ folder: string; name: string } | null>(null);
   const ref = useFlip(
@@ -519,6 +520,43 @@ export function BoardView({
         </section>
       )}
 
+      {board.closed.length > 0 && (
+        <section className="ab-panel board-closed" aria-label="closed agents">
+          <button
+            type="button"
+            className="board-closed-head"
+            aria-expanded={closedOpen}
+            onClick={() => setClosedOpen((v) => !v)}
+          >
+            <span className="board-closed-label">
+              Off shift
+              <span className="board-closed-note">
+                {" "}
+                {board.closed.length} rehirable for 24 hours
+              </span>
+            </span>
+            <span className="board-closed-caret" aria-hidden>
+              {closedOpen ? "▾" : "▸"}
+            </span>
+          </button>
+          {closedOpen && (
+            <div className="board-closed-list">
+              {board.closed.map((c) => (
+                <button
+                  key={c.pane}
+                  type="button"
+                  className="ab-btn board-mini"
+                  data-testid="rehire"
+                  onClick={() => api.rehire(c.pane)}
+                >
+                  Rehire {c.name || c.pane}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="board-body">
         <div ref={ref} className="board-columns">
           {board.columns.map((col) => {
@@ -585,26 +623,6 @@ export function BoardView({
           />
         )}
       </div>
-
-      {board.closed.length > 0 && (
-        <footer className="board-closed ab-panel">
-          <span className="board-closed-label">
-            Closed, rehirable for 24 hours
-          </span>
-          <span className="board-closed-list">
-            {board.closed.map((c) => (
-              <button
-                key={c.pane}
-                type="button"
-                className="ab-btn board-mini"
-                onClick={() => api.rehire(c.pane)}
-              >
-                Rehire {c.name || c.pane}
-              </button>
-            ))}
-          </span>
-        </footer>
-      )}
 
       <HireModal
         opened={hireOpen}
