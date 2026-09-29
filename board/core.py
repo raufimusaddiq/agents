@@ -294,8 +294,12 @@ def read_screens() -> None:
             r["screen_updated_at"] = time.time()
             ask = adapter.parse_prompt(screen) if adapter and adapter.supports.get("prompts") else None
             r["ask"] = ask.to_json() if ask else None
-            # Every harness gets the same attention/fallback behavior.
-            r["needs_user"] = bool(ask) or r.get("agent_status") == "blocked" or _screen_needs_user(screen, r.get("agent_status"), kind)
+            # A parsed menu is authoritative. Otherwise trust a `blocked` runtime
+            # state or a clearly-waiting screen tail — but never an agent that is
+            # actively working, and never text scrolled off the bottom.
+            blocked = r.get("agent_status") == "blocked"
+            fallback = _screen_needs_user(screen, r.get("agent_status"), kind)
+            r["needs_user"] = bool(ask) or blocked or fallback
             if not r["needs_user"]:
                 STATE.attention_notified.discard(pane)
             elif pane not in STATE.attention_notified:
@@ -317,23 +321,35 @@ def read_screens() -> None:
 # A screen that unmistakably waits for the user, even without parsed options.
 _NEEDS_USER_MARKERS = (
     "paste code here", "paste the code", "enter the code", "sign in",
-    "log in", "login", "authorize", "device code", "press enter",
-    "do you want", "[y/n]", "yes/no", "overwrite?",
+    "device code", "authorize", "press enter",
+    "[y/n]", "yes/no", "overwrite?",
+    "do you want to",
 )
 
 
 def _screen_needs_user(screen: list[str], agent_status: str, kind: str = "") -> bool:
-    # Codex keeps historical output above its ordinary input box. Markers in
-    # that history (or the user draft) are not an active approval prompt. Parsed
-    # numbered menus and an explicit blocked runtime state still take priority.
-    if kind == "codex" and any(line.lstrip().startswith("›") and not re.match(r"^\d+\.", line.lstrip()[1:].lstrip()) for line in screen[-8:]):
+    """A fallback for an unparsed prompt, used only when the agent is not
+    actively working.
+
+    Measured: an agent that is working (herdr reports `working`, and Codex shows
+    `esc to interrupt`) is not waiting on the user, so tool output that happens
+    to contain words like "login" or "press enter" must not flag it. Only the
+    bottom of the screen is scanned, because that is where a live prompt sits;
+    scrolled tool output above it is history, not a question.
+    """
+    if agent_status == "working":
         return False
-    text = "\n".join(screen[-40:]).lower()
-    if any(m in text for m in _NEEDS_USER_MARKERS):
-        return True
-    # Measured: herdr can report `done` while the agent is actually waiting.
-    # Only trust a plain idle/done screen when nothing looks like a question.
-    return False
+    tail = [ln for ln in screen[-6:] if ln.strip()]
+    text = "\n".join(tail).lower()
+    if not any(m in text for m in _NEEDS_USER_MARKERS):
+        return False
+    # Codex draws its ordinary input box with a "›" caret; a line under it that
+    # is a numbered choice is a real prompt, otherwise this is just the composer.
+    if kind == "codex":
+        numbered = any(re.match(r"^\s*(›)?\s*\d+\.\s", ln) for ln in screen[-8:])
+        if not numbered:
+            return False
+    return True
 
 
 def _track_usage(pane: str, st: dict) -> None:

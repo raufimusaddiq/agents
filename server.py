@@ -1064,6 +1064,27 @@ def _selfcheck() -> None:
     assert _default_wt_branch("My Agent!") == "agent/my-agent"
     assert _default_wt_branch("") == "agent/agent"
 
+    # a working agent is never "needs you", even if tool output mentions login.
+    assert not _screen_needs_user(
+        ["npm run test:live", "PASS login flow", "Do you want to continue?",
+         "", "esc to interrupt"], "working")
+    # a real bottom-of-screen prompt does flag it.
+    assert _screen_needs_user(
+        ["lots of history", "Paste code here if prompted >"],
+        "idle")
+    # scrolled-off history is not a prompt (bottom of screen is the composer).
+    assert not _screen_needs_user(
+        ["Do you want to continue?"] + [f"  output line {i}" for i in range(40)]
+        + ["› Ask Codex to do anything", "GPT default · ~/repo"], "idle")
+    # codex: a numbered menu under the composer is a real prompt.
+    assert _screen_needs_user(
+        ["Do you want to allow this?", "› 1. Yes", "  2. No"],
+        "unknown", "codex")
+    # codex: a plain composer with no numbered options is not a prompt.
+    assert not _screen_needs_user(
+        ["› Ask Codex to do anything", "GPT default · ~/repo"],
+        "idle", "codex")
+
     print("selfcheck: OK")
 
 

@@ -1226,6 +1226,22 @@ body {
 
 /* ------------------------------------------------------------- chat */
 
+.chat-scroll {
+  max-height: 340px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: var(--ab-rivet);
+  border: 2px solid var(--ab-panel);
+}
+
 .chat-thread {
   display: flex;
   flex-direction: column;
@@ -1290,6 +1306,69 @@ body {
 
 .screen-tail {
   margin-top: 14px;
+  border: 2px solid var(--ab-border);
+  background: #101014;
+  box-shadow: var(--ab-shadow-sm);
+}
+
+.screen-tail-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  border: none;
+  border-bottom: 2px solid var(--ab-border);
+  background: var(--ab-ink);
+  color: var(--ab-panel);
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.screen-tail-head:focus-visible {
+  outline-offset: -3px;
+}
+
+.screen-tail-note {
+  font-weight: 400;
+  font-size: 11px;
+  opacity: 0.8;
+  margin-left: auto;
+}
+
+.screen-tail-caret {
+  font-size: 11px;
+}
+
+.screen-tail-body {
+  margin: 0;
+  padding: 8px 10px;
+  height: 180px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: #d8e0c8;
+  background: #101014;
+}
+
+.screen-tail[data-live="working"] .screen-tail-head .lamp {
+  background: var(--ab-col-go);
+}
+
+.screen-tail body::-webkit-scrollbar,
+.screen-tail-body::-webkit-scrollbar {
+  width: 10px;
+}
+
+.screen-tail-body::-webkit-scrollbar-thumb {
+  background: #3a3b45;
+  border: 2px solid #101014;
 }
 
 /* ------------------------------------------------------------ lists */

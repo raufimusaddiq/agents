@@ -12,39 +12,118 @@ import { Composer } from "./Composer";
 import { statusLamp } from "./TicketCard";
 
 function ChatThread({ rows }: { rows: ChatRow[] }) {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const pinned = useRef(true);
+
+  // Keep the newest message in view, unless the user scrolled up to read.
+  useEffect(() => {
+    const el = boxRef.current;
+    if (!el || !pinned.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [rows]);
+
+  function onScroll() {
+    const el = boxRef.current;
+    if (!el) return;
+    // 24px tolerance so a jittery scrollbar does not unpin.
+    pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  }
+
   return (
-    <div className="chat-thread">
-      {rows.map((r, i) => {
-        if (r._fold) {
+    <div
+      ref={boxRef}
+      className="chat-scroll"
+      onScroll={onScroll}
+      data-testid="chat-scroll"
+    >
+      <div className="chat-thread">
+        {rows.map((r, i) => {
+          if (r._fold) {
+            return (
+              <p key={i} className="chat-fold mono">
+                {r._fold === "tool" ? r.tool || "tool" : r._fold}
+                {r.path ? ` ${r.path}` : ""}
+                {r.command ? ` $ ${r.command.slice(0, 80)}` : ""}
+                {r.subagent_type ? ` [${r.subagent_type}]` : ""}
+                {r._count && r._count > 1 ? ` ×${r._count}` : ""}
+              </p>
+            );
+          }
+          const isUser = r.kind === "prompt";
+          const isAnswer = r.kind === "answer" || r.kind === "question";
           return (
-            <p key={i} className="chat-fold mono">
-              {r._fold === "tool" ? r.tool || "tool" : r._fold}
-              {r.path ? ` ${r.path}` : ""}
-              {r.command ? ` $ ${r.command.slice(0, 80)}` : ""}
-              {r.subagent_type ? ` [${r.subagent_type}]` : ""}
-              {r._count && r._count > 1 ? ` ×${r._count}` : ""}
-            </p>
+            <div
+              key={i}
+              className={
+                "chat-line " +
+                (isAnswer ? "is-question" : isUser ? "is-you" : "is-agent")
+              }
+            >
+              <span className="chat-who">
+                {isAnswer ? "question" : isUser ? "you" : "agent"}
+              </span>
+              <p className="chat-text" data-testid={`chat-${r.kind}`}>
+                {r.answer || r.text}
+              </p>
+            </div>
           );
-        }
-        const isUser = r.kind === "prompt";
-        const isAnswer = r.kind === "answer" || r.kind === "question";
-        return (
-          <div
-            key={i}
-            className={
-              "chat-line " +
-              (isAnswer ? "is-question" : isUser ? "is-you" : "is-agent")
-            }
-          >
-            <span className="chat-who">
-              {isAnswer ? "question" : isUser ? "you" : "agent"}
-            </span>
-            <p className="chat-text" data-testid={`chat-${r.kind}`}>
-              {r.answer || r.text}
-            </p>
-          </div>
-        );
-      })}
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The live terminal tail. Auto-scrolls to the newest line and stays pinned
+ * unless the user scrolls up, so it always shows what the agent is doing right
+ * now. Collapsible, because it can be long.
+ */
+function ScreenTail({ lines, live }: { lines: string[]; live: string }) {
+  const [open, setOpen] = useState(true);
+  const preRef = useRef<HTMLPreElement | null>(null);
+  const pinned = useRef(true);
+  const visible = lines.slice(-80);
+
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el || !open || !pinned.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [lines, open]);
+
+  return (
+    <div className="screen-tail" data-live={live}>
+      <button
+        type="button"
+        className="screen-tail-head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="lamp is-working" aria-hidden />
+        Live screen
+        <span className="screen-tail-note">
+          {live === "working" ? "agent is working" : live}
+        </span>
+        <span className="screen-tail-caret" aria-hidden>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && (
+        <pre
+          ref={preRef}
+          className="screen-tail-body"
+          tabIndex={0}
+          role="region"
+          aria-label="Live terminal feedback"
+          onScroll={() => {
+            const el = preRef.current;
+            if (!el) return;
+            pinned.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+          }}
+        >
+          {visible.join("\n")}
+        </pre>
+      )}
     </div>
   );
 }
@@ -551,16 +630,7 @@ export function AgentPanel({
         </Tabs.List>
 
         <Tabs.Panel value="chat" pt="sm">
-          <ScrollArea
-            h={360}
-            viewportProps={{
-              tabIndex: 0,
-              role: "region",
-              "aria-label": "Chat history",
-            }}
-          >
-            <ChatThread rows={agent.chat} />
-          </ScrollArea>
+          <ChatThread rows={agent.chat} />
           <Composer
             key={agent.pane}
             pane={agent.pane}
@@ -568,21 +638,10 @@ export function AgentPanel({
             readOnly={readOnly}
           />
           {agent.screen_tail && agent.screen_tail.length > 0 && (
-            <div className="screen-tail">
-              <h3 className="panel-h">Live screen (fallback)</h3>
-              <ScrollArea
-                h={150}
-                viewportProps={{
-                  tabIndex: 0,
-                  role: "region",
-                  "aria-label": "Live terminal feedback",
-                }}
-              >
-                <pre className="diff-body">
-                  {agent.screen_tail.slice(-30).join("\n")}
-                </pre>
-              </ScrollArea>
-            </div>
+            <ScreenTail
+              lines={agent.screen_tail}
+              live={agent.agent_status || "unknown"}
+            />
           )}
         </Tabs.Panel>
 
