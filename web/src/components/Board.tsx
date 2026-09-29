@@ -12,84 +12,6 @@ import { TicketCard } from "./TicketCard";
 import { Crew } from "./Crew";
 import { useFlip } from "../flip";
 
-function WorktreeModal({
-  opened,
-  onClose,
-  repos,
-}: {
-  opened: boolean;
-  onClose: () => void;
-  repos: string[];
-}) {
-  const [repo, setRepo] = useState(repos[0] || "");
-  const [branch, setBranch] = useState("");
-  const [base, setBase] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (opened && !repo && repos[0]) setRepo(repos[0]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, repos]);
-
-  async function submit() {
-    setBusy(true);
-    setError("");
-    try {
-      await api.createWorktree({ repo, branch, base });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={<span className="font-display hire-title">New worktree</span>}
-      centered
-    >
-      <Stack gap="sm">
-        <Select
-          label="Repository"
-          data={repos.map((r) => ({ value: r, label: r.split("/").pop() || r }))}
-          value={repo}
-          onChange={(v) => setRepo(v || "")}
-          allowDeselect={false}
-          aria-label="worktree repo"
-        />
-        <TextInput
-          label="Branch"
-          description="A new branch name. Use the ticket id, e.g. ABC-123-login."
-          value={branch}
-          onChange={(e) => setBranch(e.currentTarget.value)}
-          aria-label="worktree branch"
-        />
-        <TextInput
-          label="Base (optional)"
-          placeholder="main"
-          value={base}
-          onChange={(e) => setBase(e.currentTarget.value)}
-          aria-label="worktree base"
-        />
-        {error && <p className="hire-error">{error}</p>}
-        <button
-          type="button"
-          className="ab-btn hire-submit"
-          onClick={submit}
-          disabled={busy || !repo || !branch}
-          data-testid="worktree-create"
-        >
-          {busy ? "Creating…" : "Create worktree"}
-        </button>
-      </Stack>
-    </Modal>
-  );
-}
-
 function FolderPicker({
   value,
   onChange,
@@ -453,7 +375,6 @@ export function BoardView({
     typeof window !== "undefined" ? window.innerWidth >= 900 : true,
   );
   const [hireOpen, setHireOpen] = useState(false);
-  const [wtOpen, setWtOpen] = useState(false);
   const [hirePreset, setHirePreset] =
     useState<{ folder: string; name: string } | null>(null);
   const ref = useFlip(
@@ -550,14 +471,6 @@ export function BoardView({
           </button>
           <button
             type="button"
-            className="ab-btn board-ctl"
-            data-testid="worktree-open"
-            onClick={() => setWtOpen(true)}
-          >
-            New worktree
-          </button>
-          <button
-            type="button"
             className="ab-btn board-ctl is-primary"
             data-testid="hire-open"
             onClick={() => {
@@ -628,8 +541,8 @@ export function BoardView({
                     {count}
                   </span>
                 </header>
-                <ScrollArea h="calc(100vh - 280px)" type="hover">
-                  <Stack gap="xs" pt={6}>
+                <div className="board-col-scroll">
+                  <Stack gap="xs">
                     {col === "Parked" ? (
                       <WorktreeCards
                         worktrees={board.worktrees}
@@ -658,7 +571,7 @@ export function BoardView({
                       ))
                     )}
                   </Stack>
-                </ScrollArea>
+                </div>
               </section>
             );
           })}
@@ -698,11 +611,6 @@ export function BoardView({
         onClose={() => setHireOpen(false)}
         onDone={() => undefined}
         preset={hirePreset}
-      />
-      <WorktreeModal
-        opened={wtOpen}
-        onClose={() => setWtOpen(false)}
-        repos={repos}
       />
     </div>
   );

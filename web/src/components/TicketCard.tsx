@@ -70,6 +70,7 @@ export function TicketCard({
       className="ab-card ticket-card"
       data-testid="ticket"
       data-needs={needs}
+      data-stage={ticket.stage.toLowerCase().replace(/ /g, "-")}
       aria-label={`ticket ${ticket.name}`}
     >
       <header className="ticket-head">
