@@ -33,6 +33,12 @@ with tempfile.TemporaryDirectory(prefix='agent-board-live-audit-') as folder:
     server.SECRETS_PATH = root / 'secrets.json'
     server.STATE_DIR = root / 'state'
     server.STATE_DIR.mkdir()
+    import board.core as core
+    import board.security as security
+    core.ROSTER_PATH = server.ROSTER_PATH
+    core.STATE_DIR = server.STATE_DIR
+    security.AUDIT_PATH = server.AUDIT_PATH
+    security.SECRETS_PATH = server.SECRETS_PATH
     threading.Thread(target=server.poll_loop, daemon=True).start()
     original_build_board = server.build_board
     def read_only_board():

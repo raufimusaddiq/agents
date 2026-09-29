@@ -6,92 +6,6 @@ import { TicketCard } from "./TicketCard";
 import { Crew } from "./Crew";
 import { useFlip } from "../flip";
 
-function WorktreeModal({
-  opened,
-  onClose,
-  repos,
-}: {
-  opened: boolean;
-  onClose: () => void;
-  repos: string[];
-}) {
-  const [repo, setRepo] = useState(repos[0] || "");
-  const [branch, setBranch] = useState("");
-  const [base, setBase] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (opened && !repo && repos[0]) setRepo(repos[0]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened, repos]);
-
-  async function submit() {
-    if (busy) return;
-    setBusy(true);
-    setError("");
-    try {
-      await api.createWorktree({ repo, branch, base });
-      onClose();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={<span className="hire-title">New worktree</span>}
-      centered
-    >
-      <Stack gap="sm">
-        <Select
-          label="Repository"
-          data={repos.map((r) => ({
-            value: r,
-            label: r.split("/").pop() || r,
-          }))}
-          value={repo}
-          onChange={(v) => setRepo(v || "")}
-          allowDeselect={false}
-          aria-label="worktree repo"
-        />
-        <TextInput
-          label="Branch"
-          description="A new branch name. Use the ticket id, e.g. ABC-123-login."
-          value={branch}
-          onChange={(e) => setBranch(e.currentTarget.value)}
-          aria-label="worktree branch"
-        />
-        <TextInput
-          label="Base (optional)"
-          placeholder="main"
-          value={base}
-          onChange={(e) => setBase(e.currentTarget.value)}
-          aria-label="worktree base"
-        />
-        {error && (
-          <p className="hire-error" role="alert">
-            {error}
-          </p>
-        )}
-        <button
-          type="button"
-          className="ab-btn hire-submit"
-          onClick={submit}
-          disabled={busy || !repo || !branch}
-          data-testid="worktree-create"
-        >
-          {busy ? "Creating…" : "Create worktree"}
-        </button>
-      </Stack>
-    </Modal>
-  );
-}
-
 function FolderPicker({
   value,
   onChange,
@@ -476,11 +390,9 @@ export function BoardView({
     typeof window !== "undefined" ? window.innerWidth >= 900 : true,
   );
   const [hireOpen, setHireOpen] = useState(false);
-  const [wtOpen, setWtOpen] = useState(false);
-  const [hirePreset, setHirePreset] = useState<{
-    folder: string;
-    name: string;
-  } | null>(null);
+  const [closedOpen, setClosedOpen] = useState(false);
+  const [hirePreset, setHirePreset] =
+    useState<{ folder: string; name: string } | null>(null);
   const ref = useFlip(
     JSON.stringify(board.tickets.map((t) => [t.id, t.stage])),
   );
@@ -608,15 +520,6 @@ export function BoardView({
           </button>
           <button
             type="button"
-            className="ab-btn board-ctl"
-            disabled={board.read_only}
-            data-testid="worktree-open"
-            onClick={() => setWtOpen(true)}
-          >
-            New worktree
-          </button>
-          <button
-            type="button"
             className="ab-btn board-ctl is-primary"
             disabled={board.read_only}
             data-testid="hire-open"
@@ -668,6 +571,44 @@ export function BoardView({
         </section>
       )}
 
+      {board.closed.length > 0 && (
+        <section className="ab-panel board-closed" aria-label="closed agents">
+          <button
+            type="button"
+            className="board-closed-head"
+            aria-expanded={closedOpen}
+            onClick={() => setClosedOpen((v) => !v)}
+          >
+            <span className="board-closed-label">
+              Off shift
+              <span className="board-closed-note">
+                {" "}
+                {board.closed.length} rehirable for 24 hours
+              </span>
+            </span>
+            <span className="board-closed-caret" aria-hidden>
+              {closedOpen ? "▾" : "▸"}
+            </span>
+          </button>
+          {closedOpen && (
+            <div className="board-closed-list">
+              {board.closed.map((c) => (
+                <button
+                  key={c.pane}
+                  type="button"
+                  className="ab-btn board-mini"
+                  disabled={!!board.read_only}
+                  data-testid="rehire"
+                  onClick={() => api.rehire(c.pane)}
+                >
+                  Rehire {c.name || c.pane}
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <div className="board-body">
         <div
           ref={ref}
@@ -694,8 +635,8 @@ export function BoardView({
                     {count}
                   </span>
                 </header>
-                <ScrollArea h="calc(100vh - 280px)" type="hover">
-                  <Stack gap="xs" pt={6}>
+                <div className="board-col-scroll">
+                  <Stack gap="xs">
                     {col === "Parked" ? (
                       <WorktreeCards
                         worktrees={board.worktrees}
@@ -725,7 +666,7 @@ export function BoardView({
                       ))
                     )}
                   </Stack>
-                </ScrollArea>
+                </div>
               </section>
             );
           })}
@@ -740,36 +681,11 @@ export function BoardView({
         )}
       </div>
 
-      {board.closed.length > 0 && (
-        <footer className="board-closed ab-panel">
-          <span className="board-closed-label">
-            Closed, rehirable for 24 hours
-          </span>
-          <span className="board-closed-list">
-            {board.closed.map((c) => (
-              <button
-                key={c.pane}
-                type="button"
-                className="ab-btn board-mini"
-                onClick={() => api.rehire(c.pane)}
-              >
-                Rehire {c.name || c.pane}
-              </button>
-            ))}
-          </span>
-        </footer>
-      )}
-
       <HireModal
         opened={hireOpen}
         onClose={() => setHireOpen(false)}
         onDone={() => undefined}
         preset={hirePreset}
-      />
-      <WorktreeModal
-        opened={wtOpen}
-        onClose={() => setWtOpen(false)}
-        repos={repos}
       />
     </div>
   );

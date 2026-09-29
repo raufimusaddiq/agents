@@ -114,16 +114,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  createWorktree: (body: {
-    repo: string;
-    branch: string;
-    base?: string;
-    label?: string;
-  }) =>
-    req<{ ok: boolean }>("/api/worktree_create", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
   openWorktree: (path: string) =>
     req<{ ok: boolean }>("/api/worktree_open", {
       method: "POST",

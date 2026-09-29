@@ -409,15 +409,6 @@ body {
   color: #fff;
 }
 
-.board-columns {
-  display: flex;
-  gap: 12px;
-  overflow-x: auto;
-  align-items: flex-start;
-  flex: 1;
-  padding-bottom: 6px;
-}
-
 .board-col {
   min-width: 228px;
   flex: 1 0 228px;
@@ -426,6 +417,34 @@ body {
   background: var(--ab-panel);
   padding: 8px;
   border-radius: var(--ab-radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 100%;
+}
+
+/* Only the ticket list inside a column scrolls; the page itself does not. */
+.board-col-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  min-height: 0;
+  flex: 1;
+  padding-top: 6px;
+  margin-right: -4px;
+  padding-right: 4px;
+}
+
+.board-col-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.board-col-scroll::-webkit-scrollbar-thumb {
+  background: var(--ab-rivet);
+  border: 2px solid var(--ab-panel);
+}
+
+.board-col-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .board-col[data-col="to-do"] {
@@ -466,7 +485,32 @@ body {
   margin: 0;
   font-size: 13px;
   color: var(--ab-ink);
+  letter-spacing: 0.01em;
 }
+
+/* A little stage sign on the column header, coloured by stage. */
+.board-col[data-col="to-do"] .board-col-title::before,
+.board-col[data-col="in-progress"] .board-col-title::before,
+.board-col[data-col="testing"] .board-col-title::before,
+.board-col[data-col="review"] .board-col-title::before,
+.board-col[data-col="ready-to-push"] .board-col-title::before,
+.board-col[data-col="shipped"] .board-col-title::before,
+.board-col[data-col="parked"] .board-col-title::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border: 1.5px solid var(--ab-border);
+  vertical-align: baseline;
+}
+.board-col[data-col="to-do"] .board-col-title::before { background: var(--ab-col-idle); }
+.board-col[data-col="in-progress"] .board-col-title::before { background: var(--ab-col-go); }
+.board-col[data-col="testing"] .board-col-title::before { background: var(--ab-col-test); }
+.board-col[data-col="review"] .board-col-title::before { background: var(--ab-col-review); }
+.board-col[data-col="ready-to-push"] .board-col-title::before { background: var(--ab-col-ready); }
+.board-col[data-col="shipped"] .board-col-title::before { background: var(--ab-col-ship); }
+.board-col[data-col="parked"] .board-col-title::before { background: var(--ab-col-park); }
 
 .board-col-count {
   font-family: "Bungee", sans-serif;
@@ -485,22 +529,52 @@ body {
 }
 
 .board-closed {
+  flex: 0 0 auto;
+  padding: 0;
+  overflow: hidden;
+}
+
+.board-closed-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
-  padding: 8px 14px;
-  flex-wrap: wrap;
+  width: 100%;
+  padding: 7px 14px;
+  border: none;
+  background: var(--ab-ink);
+  color: var(--ab-panel);
+  font: inherit;
+  cursor: pointer;
+}
+
+.board-closed-head:focus-visible {
+  outline-offset: -3px;
 }
 
 .board-closed-label {
+  font-family: "Bungee", sans-serif;
   font-size: 12px;
-  color: var(--ab-dim);
+  letter-spacing: 0.02em;
+}
+
+.board-closed-note {
+  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+
+.board-closed-caret {
+  font-size: 12px;
 }
 
 .board-closed-list {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  padding: 8px 14px;
+  border-top: 2px solid var(--ab-border);
 }
 
 /* --------------------------------------------------------- work order */
@@ -707,19 +781,44 @@ body {
   gap: 12px;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .board-body .board-columns {
+  display: flex;
+  gap: 12px;
   flex: 1;
   min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  align-items: stretch;
+  padding-bottom: 4px;
 }
 
 .ticket-card {
   padding: 9px 11px 10px;
+  border-left-width: 6px;
+}
+
+.ticket-card[data-stage="to-do"] { border-left-color: var(--ab-col-idle); }
+.ticket-card[data-stage="in-progress"] { border-left-color: var(--ab-col-go); }
+.ticket-card[data-stage="testing"] { border-left-color: var(--ab-col-test); }
+.ticket-card[data-stage="review"] { border-left-color: var(--ab-col-review); }
+.ticket-card[data-stage="ready-to-push"] { border-left-color: var(--ab-col-ready); }
+.ticket-card[data-stage="shipped"] { border-left-color: var(--ab-col-ship); }
+
+.ticket-card:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 5px 5px 0 var(--ab-border);
 }
 
 .ticket-card[data-needs="true"] {
   box-shadow: 4px 4px 0 var(--signal-red);
+}
+
+.ticket-card[data-needs="true"]:hover {
+  box-shadow: 6px 6px 0 var(--signal-red);
 }
 
 .ticket-head {
@@ -858,14 +957,38 @@ body {
   background: var(--ab-col-idle);
 }
 
+@keyframes lamp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lamp.is-working {
+    animation: none;
+  }
+  .ticket-card:hover {
+    transform: none;
+    box-shadow: var(--ab-shadow-sm);
+  }
+  .ticket-card[data-needs="true"]:hover {
+    box-shadow: 4px 4px 0 var(--signal-red);
+  }
+}
+
 /* ------------------------------------------------------------- crew */
 
 .crew {
   flex: 0 0 260px;
   min-width: 0;
+  min-height: 0;
   padding: 10px 12px 14px;
   overflow-y: auto;
-  max-height: calc(100vh - 150px);
+  overscroll-behavior: contain;
 }
 
 .crew-head {

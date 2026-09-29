@@ -77,6 +77,28 @@ need you"** marquee; everything else stays flat and quiet.
 - Colours are validated for WCAG AA in both themes; `tests/a11y.mjs` asserts
   zero axe violations at 1280px and 375px.
 
+## Layout
+
+```
+server.py            entrypoint: HTTP routes, WebSocket, self-check, main()
+board/
+  config.py          config load/merge/save
+  herdr.py           herdr CLI wrapper + argument validation
+  security.py        login, sessions, machine tokens, origin allow-list, audit
+  gitrepo.py         read-only git helpers (always --no-optional-locks)
+  notify.py          in-page + webhook notifications
+  terminal.py        browser terminal: herdr TUI over WebSocket + pty
+  workflow.py        git command rules, the nine stations, ticket inference
+  worktrees.py       parked worktrees (native herdr, git fallback)
+  core.py            live state, polling, board building
+  hire.py            hire/fire, workspaces, folder picker
+adapters/            one module per harness (claude, codex, opencode)
+web/                 Vite + React + Mantine front end
+```
+
+`server.py` runs `_selfcheck()` at every start: asserts over the parsers,
+`plan_answer`, the workflow rules and the auth checks.
+
 ## Configuration — `config.json`
 
 | key | meaning |

@@ -1,3 +1,4 @@
+from module_patch import patch_shared
 """Transcript streaming and attention detection, using isolated fixture data."""
 import json
 from pathlib import Path
@@ -14,9 +15,9 @@ from adapters.codex import _parse_codex
 
 class FeedbackTests(unittest.TestCase):
     def setUp(self):
-        notifier = patch.object(server, "notify", return_value=False)
-        notifier.start()
-        self.addCleanup(notifier.stop)
+        notifier = patch_shared(server, "notify", return_value=False)
+        notifier.__enter__()
+        self.addCleanup(notifier.__exit__, None, None, None)
 
     def test_opencode_streamed_part_updates_without_duplicates_or_skipped_timestamps(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -62,7 +63,7 @@ class FeedbackTests(unittest.TestCase):
         class Adapter:
             def events(self, *_):
                 return batches.pop(0)
-        with patch.object(server, 'STATE', state), patch.object(server, 'get_adapter', return_value=Adapter()):
+        with patch_shared(server, 'STATE', state), patch_shared(server, 'get_adapter', return_value=Adapter()):
             server.poll_transcripts()
             server.poll_transcripts()
         self.assertEqual(len(state.events['w1:p1']), 1)
@@ -71,11 +72,11 @@ class FeedbackTests(unittest.TestCase):
     def test_every_harness_gets_raw_attention_fallback(self):
         state = server.State()
         state.agents['w1:p1'] = {'pane': 'w1:p1', 'kind': 'opencode', 'agent_status': 'idle'}
-        with patch.object(server, 'STATE', state), patch.object(server, 'read_screen', return_value=['Sign in: enter the code']):
+        with patch_shared(server, 'STATE', state), patch_shared(server, 'read_screen', return_value=['Sign in: enter the code']):
             server.read_screens()
         self.assertTrue(state.agents['w1:p1']['needs_user'])
         self.assertEqual(state.agents['w1:p1']['ask']['kind'], 'raw')
-        with patch.object(server, 'STATE', state), patch.object(server, 'read_screen', return_value=['Ready']):
+        with patch_shared(server, 'STATE', state), patch_shared(server, 'read_screen', return_value=['Ready']):
             server.read_screens()
         self.assertFalse(state.agents['w1:p1']['needs_user'])
         self.assertIsNone(state.agents['w1:p1']['ask'])
@@ -94,14 +95,14 @@ class FeedbackTests(unittest.TestCase):
                 return {}
             def parse_prompt(self, _):
                 return Ask(kind='permission', question='Allow this command?')
-        with patch.object(server, 'STATE', state), patch.object(server, 'get_adapter', return_value=Adapter()), patch.object(server, 'read_screen', return_value=[]):
+        with patch_shared(server, 'STATE', state), patch_shared(server, 'get_adapter', return_value=Adapter()), patch_shared(server, 'read_screen', return_value=[]):
             server.read_screens()
         self.assertTrue(state.agents['w1:p1']['needs_user'])
 
     def test_feedback_ignores_poll_time_and_tracks_revisions(self):
         state = server.State()
         state.agents['w1:p1'] = {'pane': 'w1:p1', 'last_seen': 1}
-        with patch.object(server, 'STATE', state):
+        with patch_shared(server, 'STATE', state):
             before = server.feedback_signature()
             state.agents['w1:p1']['last_seen'] = 2
             self.assertEqual(server.feedback_signature(), before)
@@ -113,12 +114,12 @@ class NotificationTests(unittest.TestCase):
     def test_connected_page_counts_as_open(self):
         state = server.State()
         state.subscribe()
-        with patch.object(server,'STATE',state), patch.object(server,'_last_page_seen',0):
+        with patch_shared(server,'STATE',state), patch_shared(server,'_last_page_seen',0):
             self.assertTrue(server.page_recently_open())
 
     def test_suppressed_page_notification_does_not_consume_webhook_limit(self):
         state = server.State()
-        with patch.object(server,'STATE',state), patch.object(server,'page_recently_open',return_value=True), patch.object(server,'_send_webhook') as send:
+        with patch_shared(server,'STATE',state), patch_shared(server,'page_recently_open',return_value=True), patch_shared(server,'_send_webhook') as send:
             self.assertFalse(server.notify('title','body','w1:p1'))
         self.assertNotIn('w1:p1',state.notified)
         send.assert_not_called()
@@ -126,7 +127,7 @@ class NotificationTests(unittest.TestCase):
     def test_waiting_agent_pushes_once_without_transcript_content(self):
         state = server.State()
         state.agents['w1:p1'] = {'pane':'w1:p1','kind':'opencode','agent_status':'blocked','name':'fixture'}
-        with patch.object(server,'STATE',state), patch.object(server,'read_screen',return_value=['private login code']), patch.object(server,'notify',return_value=True) as send:
+        with patch_shared(server,'STATE',state), patch_shared(server,'read_screen',return_value=['private login code']), patch_shared(server,'notify',return_value=True) as send:
             server.read_screens()
             server.read_screens()
         self.assertEqual(send.call_count,1)
@@ -163,7 +164,7 @@ class WorkflowTests(unittest.TestCase):
             {'kind':'bash','command':'git commit -m second','ts':'second'},
         ]
         state.events['w1:p1'] = events
-        with patch.object(server,'STATE',state):
+        with patch_shared(server,'STATE',state):
             server._detect_alerts()
         self.assertEqual([alert['key'] for alert in state.alerts], ['w1:p1:second:code_no_test'])
         stages = server.compute_stations({},events[:2],None)
@@ -173,7 +174,7 @@ class WorkflowTests(unittest.TestCase):
         state = server.State()
         state.agents['w1:p1'] = {'pane':'w1:p1'}
         state.events['w1:p1'] = [{'kind':'edit','path':'README.md'}, {'kind':'bash','command':'git add . && git commit -m docs'}]
-        with patch.object(server,'STATE',state):
+        with patch_shared(server,'STATE',state):
             server._detect_alerts()
         self.assertEqual(state.alerts,[])
 

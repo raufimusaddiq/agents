@@ -1,3 +1,4 @@
+from module_patch import patch_shared
 """Isolated HTTP regression tests; no herdr, credentials, or git mutations."""
 import http.client
 import json
@@ -98,7 +99,7 @@ class HTTPTests(unittest.TestCase):
 
     def test_manual_removal_refuses_a_running_agent_checkout(self):
         with tempfile.TemporaryDirectory() as folder:
-            with patch.object(server.Handler,'_auth',return_value='user'), patch.dict(server.STATE.agents,{'w1:p1':{'cwd':str(Path(folder)/'nested')}}), patch.object(server,'_remove_worktree_by_path') as remove:
+            with patch.object(server.Handler,'_auth',return_value='user'), patch.dict(server.STATE.agents,{'w1:p1':{'cwd':str(Path(folder)/'nested')}}), patch_shared(server,'_remove_worktree_by_path') as remove:
                 status,_ = self.request('/api/worktree_remove',json.dumps({'path':folder}))
             self.assertEqual(status,409)
             remove.assert_not_called()
@@ -106,8 +107,8 @@ class HTTPTests(unittest.TestCase):
     def test_manual_removal_refuses_when_git_cannot_verify(self):
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(server.Handler, '_auth', return_value='user'), \
-                 patch.object(server, 'git', return_value=(1, '')), \
-                 patch.object(server, '_remove_worktree_by_path') as remove:
+                 patch_shared(server, 'git', return_value=(1, '')), \
+                 patch_shared(server, '_remove_worktree_by_path') as remove:
                 status, _ = self.request('/api/worktree_remove', json.dumps({'path':folder}))
                 self.assertEqual(status, 409)
                 remove.assert_not_called()
@@ -117,7 +118,7 @@ class HTTPTests(unittest.TestCase):
         adapter = SimpleNamespace(supports={'prompts': True}, parse_prompt=lambda _: ask, plan_answer=lambda *_: self.fail('must not plan an answer'))
         with patch.object(server.Handler, '_auth', return_value='user'), \
              patch.object(server.Handler, '_body_screen', return_value=[]), \
-             patch.object(server, 'get_adapter', return_value=adapter), \
+             patch_shared(server, 'get_adapter', return_value=adapter), \
              patch.dict(server.STATE.agents, {'w1:p1':{'kind':'test'}}):
             expected = ask.to_json()
             expected['question'] = 'Old question'
@@ -136,7 +137,7 @@ class HTTPTests(unittest.TestCase):
             (sibling / 'secret.txt').write_text('SECRET')
             (base / 'assets').mkdir()
             (base / 'assets' / 'secret.txt').symlink_to(sibling / 'secret.txt')
-            with patch.object(server, 'ROOT', root):
+            with patch_shared(server, 'ROOT', root):
                 for path in ['/assets/../../dist-private/secret.txt', '/assets/secret.txt']:
                     status, data = self.request(path)
                     self.assertEqual(status, 404)
@@ -223,7 +224,7 @@ class SafetyTests(unittest.TestCase):
             path = Path(folder) / 'secrets.json'
             sessions = server.Sessions()
             sessions.machine_tokens['fixture'] = 'hashed-value'
-            with patch.object(server,'SECRETS_PATH',path), patch.object(server,'SESSIONS',sessions):
+            with patch_shared(server,'SECRETS_PATH',path), patch_shared(server,'SESSIONS',sessions):
                 server._save_machine_tokens()
             self.assertEqual(json.loads(path.read_text()),{'machine_tokens':{'fixture':'hashed-value'}})
             self.assertEqual(path.stat().st_mode & 0o777,0o600)
@@ -249,7 +250,7 @@ class SafetyTests(unittest.TestCase):
             ([(0, ''), (0, '')], ''),
         ]
         for results, expected in cases:
-            with self.subTest(results=results), patch.object(server, 'git', side_effect=results):
+            with self.subTest(results=results), patch_shared(server, 'git', side_effect=results):
                 self.assertEqual(server.worktree_removal_blocker('/unused'), expected)
 
     def test_folder_picker_refuses_sibling_with_same_prefix(self):

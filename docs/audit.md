@@ -3,7 +3,8 @@
 The audit covers the Python API, harness adapters, React frontend, styling,
 agent details, live feedback, Git/worktree safety, authentication, notifications,
 and local installation scripts. Fixes are in this checkout. The installed board
-on port 8792 has not been replaced.
+on port 8792 has not been replaced. The merge retains the upstream board package
+refactor, independent column scrolling, and collapsible Off shift strip.
 
 ## UI styling and interaction consistency
 
