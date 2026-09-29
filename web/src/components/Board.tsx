@@ -89,7 +89,7 @@ function HireModal({
             {error}
           </Text>
         )}
-        <Button onClick={submit} loading={busy}>
+        <Button onClick={submit} loading={busy} data-testid="hire-submit">
           Hire
         </Button>
       </Stack>
@@ -240,6 +240,7 @@ export function BoardView({
           </Button>
           <Button
             size="xs"
+            data-testid="hire-open"
             onClick={() => {
               setHirePreset(null);
               setHireOpen(true);
