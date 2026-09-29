@@ -100,6 +100,16 @@ async function answerAsk(page, name) {
   }
   check("hire: card appears", hired, hired ? "" : "(timeout)");
 
+  // ---- answer any startup prompt (folder trust / hooks etc.) ----
+  if (hired) {
+    for (let i = 0; i < 8; i++) {
+      const answered = await answerAsk(page, UNIQUE);
+      if (!answered) break;
+      await page.waitForTimeout(4000);
+    }
+    await page.waitForTimeout(3000);
+  }
+
   // ---- chat prompt + reply ----
   if (await card.count()) {
     await card.click();
@@ -130,12 +140,19 @@ async function answerAsk(page, name) {
         text: "Create x_e2e.py with print(1). Then run: git add -A && git commit -m e2e. Say E2E_COMMITTED.",
       }),
     });
-    await page.waitForTimeout(30000);
+    // The harness may ask permission for the git command; answer any prompt
+    // from the fixture's own card (targeted by the unique name) until the
+    // commit lands or we run out of attempts.
     let log = "";
-    try {
-      log = sh("git", ["-C", SCRATCH, "log", "--oneline"]);
-    } catch {
-      /* empty */
+    for (let i = 0; i < 12; i++) {
+      await page.waitForTimeout(5000);
+      await answerAsk(page, UNIQUE);
+      try {
+        log = sh("git", ["-C", SCRATCH, "log", "--oneline"]);
+      } catch {
+        log = "";
+      }
+      if (log.includes("e2e")) break;
     }
     check("commit happened", log.includes("e2e"), log.slice(0, 60));
     await page.waitForTimeout(12000);

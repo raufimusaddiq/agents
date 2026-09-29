@@ -403,6 +403,13 @@ def git(repo: str, *args: str, timeout: float = 15.0) -> tuple[int, str]:
 
 
 def repo_root(path: str) -> str | None:
+    if not path:
+        return None
+    # Measured: herdr marks a deleted cwd as "<path> (deleted)".
+    if path.endswith(" (deleted)"):
+        path = path[:-len(" (deleted)")]
+    if not os.path.isdir(path):
+        return None
     rc, out = git(path, "rev-parse", "--show-toplevel")
     return out.strip() if rc == 0 and out.strip() else None
 
@@ -618,6 +625,18 @@ def reconcile_agents() -> None:
             sid = sess.get("value", "")
             if sid:
                 rec["session_id"] = sid
+            elif rec.get("kind") == "codex" and not rec.get("session_id"):
+                # Measured: herdr reports agent_session None for codex; discover
+                # the newest thread for this cwd from codex's own SQLite index.
+                # Several codex agents can share a cwd, so never hand the same
+                # thread id to two panes.
+                ad = get_adapter("codex")
+                claimed = {o.get("session_id") for p2, o in STATE.agents.items()
+                           if p2 != pane and o.get("kind") == "codex"}
+                found = (ad.discover_session(rec.get("cwd", ""), claimed)
+                         if ad else "")
+                if found:
+                    rec["session_id"] = found
             elif not rec.get("session_id"):
                 rec["session_id"] = _session_id_for(pane)
             rec.setdefault("col_since", now)
@@ -1983,6 +2002,8 @@ def _selfcheck() -> None:
         "  GPT-6-Astra default · ~/board-scratch",
         "  ← for agents · ? for shortcuts",
     ]) is None
+    # codex discovers its own session id when herdr reports none.
+    assert isinstance(cx.discover_session("/home/ubuntu"), str)
 
     # opencode adapter basics
     oc = OpencodeAdapter()

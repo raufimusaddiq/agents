@@ -87,6 +87,34 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
                     return os.path.join(root, fn)
         return None
 
+    def discover_session(self, cwd: str, claimed: set | None = None) -> str:
+        """Measured: herdr often reports agent_session None for codex, so find
+        the newest thread for this cwd in ~/.codex/state_5.sqlite instead.
+        `claimed` holds thread ids already assigned to sibling panes."""
+        claimed = claimed or set()
+        if not os.path.exists(STATE_DB):
+            return ""
+        try:
+            con = sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True)
+            con.row_factory = sqlite3.Row
+            rows = list(con.execute(
+                "SELECT id,cwd,updated_at FROM threads "
+                "ORDER BY updated_at DESC LIMIT 50"))
+            con.close()
+        except sqlite3.Error:
+            return ""
+        real = os.path.realpath(cwd) if cwd else ""
+        # Measured: herdr marks a deleted cwd as "<path> (deleted)".
+        if real.endswith(" (deleted)"):
+            real = real[:-len(" (deleted)")]
+        for r in rows:
+            if not r["cwd"]:
+                continue
+            rc = os.path.realpath(r["cwd"])
+            if rc == real and r["id"] not in claimed:
+                return r["id"]
+        return ""
+
     def events(self, session_id: str, state=None) -> list[Event]:
         path = self.transcript_path(session_id)
         if not path:
