@@ -26,6 +26,27 @@ ssh -L 8792:127.0.0.1:8792 <server>
 
 `install.sh` asks about remote access after it sets everything up (see below).
 
+## Design
+
+The board is a **retro-cartoon mission control**: a status cockpit, not a
+dashboard. It exists to answer one question in a glance — *who needs me right
+now?* — so the single bold element is the board chrome and the red **"agents
+need you"** marquee; everything else stays flat and quiet.
+
+- **Palette (functional, never decorative):** ink `#1b1a17`, teletype paper
+  `#f2e4c7`, signal red `#e4572e` (only for "needs you"), marigold `#f4a93c`
+  (busy), teal `#2e7d6f` (ready), screen green `#7bb662` (shipped). A dark
+  "night shift" theme remaps the same roles to glowing sign colours.
+- **Type:** Bungee for the wordmark and column headers only, Space Grotesk for
+  everything else. Both self-hosted (`web/public/fonts/`) so the board works
+  with no network.
+- **Form:** 2px ink outlines, hard offset shadows (a sticker, not a soft blur),
+  zero border radius, rivets on panels. Status is colour-coded by function.
+- **One motion:** cards move with a FLIP animation when their column changes.
+  Nothing animates on a timer.
+- Colours are validated for WCAG AA in both themes; `tests/a11y.mjs` asserts
+  zero axe violations at 1280px and 375px.
+
 ## Configuration — `config.json`
 
 | key | meaning |

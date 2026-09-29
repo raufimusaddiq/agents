@@ -1,15 +1,9 @@
 import { useState } from "react";
 import {
-  Badge,
-  Box,
-  Button,
-  Card,
-  Group,
   Modal,
   ScrollArea,
   Select,
   Stack,
-  Text,
   TextInput,
 } from "@mantine/core";
 import type { Board, Card as CardT, Worktree } from "../types";
@@ -51,7 +45,12 @@ function HireModal({
   }
 
   return (
-    <Modal opened={opened} onClose={onClose} title="Hire an agent">
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={<span className="font-display hire-title">Hire an agent</span>}
+      centered
+    >
       <Stack gap="sm">
         <Select
           label="Harness"
@@ -84,14 +83,16 @@ function HireModal({
           value={message}
           onChange={(e) => setMessage(e.currentTarget.value)}
         />
-        {error && (
-          <Text c="red" size="xs">
-            {error}
-          </Text>
-        )}
-        <Button onClick={submit} loading={busy} data-testid="hire-submit">
-          Hire
-        </Button>
+        {error && <p className="hire-error">{error}</p>}
+        <button
+          type="button"
+          className="ab-btn hire-submit"
+          onClick={submit}
+          disabled={busy}
+          data-testid="hire-submit"
+        >
+          {busy ? "Starting…" : "Start agent"}
+        </button>
       </Stack>
     </Modal>
   );
@@ -104,62 +105,50 @@ function WorktreeCards({
   worktrees: Worktree[];
   onRehire: (w: Worktree) => void;
 }) {
-  const [confirm, setConfirm] = useState<string | null>(null);
   const [err, setErr] = useState("");
   return (
     <Stack gap="xs">
       {worktrees.map((w) => (
-        <Card
+        <article
           key={w.path}
-          withBorder
-          padding="xs"
+          className="ab-card park-card"
           data-flip-id={`wt:${w.path}`}
           aria-label={`worktree ${w.path}`}
         >
-          <Text size="xs" fw={600} truncate>
-            {w.branch || "(detached)"}
-          </Text>
-          <Text size="xs" c="dimmed" truncate>
-            {w.path}
-          </Text>
-          <Group gap="xs" mt={4}>
-            <Badge size="xs" color={w.uncommitted ? "orange" : "gray"}>
+          <p className="park-branch font-display">{w.branch || "detached"}</p>
+          <p className="park-path mono">{w.path}</p>
+          <p className="park-stats">
+            <span className={w.uncommitted ? "park-chip is-warn" : "park-chip"}>
               {w.uncommitted} uncommitted
-            </Badge>
-            <Badge size="xs" variant="light">
-              {w.unmerged} unmerged
-            </Badge>
-          </Group>
-          <Group gap="xs" mt="xs">
-            <Button size="xs" variant="light" onClick={() => onRehire(w)}>
+            </span>
+            <span className="park-chip">{w.unmerged} unmerged</span>
+          </p>
+          <div className="park-actions">
+            <button
+              type="button"
+              className="ab-btn board-mini"
+              onClick={() => onRehire(w)}
+            >
               Rehire here
-            </Button>
-            <Button
-              size="xs"
-              color="red"
-              variant="subtle"
+            </button>
+            <button
+              type="button"
+              className="ab-btn board-mini is-danger"
               onClick={() => {
                 setErr("");
                 api.removeWorktree(w.path).catch((e) => {
                   setErr(e instanceof Error ? e.message : "failed");
-                  setConfirm(w.path);
                 });
               }}
             >
               Remove
-            </Button>
-          </Group>
-          {confirm === w.path && err && (
-            <Text c="red" size="xs" mt={4}>
-              Remove refused: {err}
-            </Text>
-          )}
-        </Card>
+            </button>
+          </div>
+          {err && <p className="hire-error">Remove refused: {err}</p>}
+        </article>
       ))}
       {worktrees.length === 0 && (
-        <Text size="xs" c="dimmed">
-          No parked worktrees.
-        </Text>
+        <p className="board-empty">No parked worktrees.</p>
       )}
     </Stack>
   );
@@ -190,19 +179,31 @@ export function BoardView({
   if (ticket) cards = cards.filter((c) => c.ticket === ticket);
   if (kind) cards = cards.filter((c) => c.kind === kind);
   if (onlyNeeds) cards = cards.filter((c) => c.needs_user);
+  const needsCount = board.cards.filter((c) => c.needs_user).length;
 
   return (
-    <Stack gap="sm" h="100%">
-      <Group justify="space-between" wrap="wrap">
-        <Group gap="xs">
-          <Text fw={700}>Agent Board</Text>
-          {board.remote_on && (
-            <Badge color="orange" variant="filled" data-testid="remote-badge">
-              remote on
-            </Badge>
-          )}
-        </Group>
-        <Group gap="xs">
+    <div className="board-shell">
+      <header className="ab-panel board-header">
+        <div className="board-brand">
+          <span className="font-display board-wordmark">Agent&nbsp;Board</span>
+        </div>
+
+        <div
+          className={needsCount ? "ab-marquee board-marquee is-live" : "board-marquee"}
+          data-testid="needs-counter"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="ar-mark" aria-hidden>
+            ▮
+          </span>
+          <span className="font-display board-marquee-num">{needsCount}</span>
+          <span className="board-marquee-label">
+            {needsCount === 1 ? "agent needs you" : "agents need you"}
+          </span>
+        </div>
+
+        <div className="board-controls">
           <Select
             size="xs"
             placeholder="ticket"
@@ -210,7 +211,8 @@ export function BoardView({
             data={ticketNames}
             value={ticket}
             onChange={setTicket}
-            w={140}
+            w={130}
+            comboboxProps={{ withinPortal: true }}
           />
           <Select
             size="xs"
@@ -220,111 +222,111 @@ export function BoardView({
             value={kind}
             onChange={setKind}
             w={120}
+            comboboxProps={{ withinPortal: true }}
           />
-          <Button
-            size="xs"
-            variant={onlyNeeds ? "filled" : "light"}
+          <button
+            type="button"
+            className="ab-btn board-ctl"
+            aria-pressed={onlyNeeds}
+            data-active={onlyNeeds}
             onClick={() => setOnlyNeeds((v) => !v)}
           >
             Only needs you
-          </Button>
-          <Button
-            size="xs"
-            variant="light"
-            color="gray"
+          </button>
+          {board.remote_on && (
+            <span className="board-remote" data-testid="remote-badge">
+              remote on
+            </span>
+          )}
+          <button
+            type="button"
+            className="ab-btn board-ctl"
             data-testid="theme-toggle"
             aria-label="toggle theme"
             onClick={onToggleTheme}
           >
-            {theme === "dark" ? "light" : "dark"}
-          </Button>
-          <Button
-            size="xs"
-            color="blue.9"
+            {theme === "dark" ? "Day shift" : "Night shift"}
+          </button>
+          <button
+            type="button"
+            className="ab-btn board-ctl is-primary"
             data-testid="hire-open"
             onClick={() => {
               setHirePreset(null);
               setHireOpen(true);
             }}
           >
-            Hire
-          </Button>
-        </Group>
-      </Group>
-
-      {board.alerts.length > 0 && (
-        <Card withBorder padding="xs" style={{ borderColor: "var(--mantine-color-red-5)" }}>
-          <Text size="xs" fw={600}>
-            Alerts (last 24h)
-          </Text>
-          {board.alerts.slice(0, 5).map((a) => (
-            <Group key={a.key} justify="space-between">
-              <Text size="xs">{a.message}</Text>
-              <Group gap={4}>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  onClick={() => api.remind(a.pane)}
-                >
-                  remind
-                </Button>
-                <Button
-                  size="xs"
-                  variant="subtle"
-                  color="gray"
-                  onClick={() => api.dismiss(a.key)}
-                >
-                  dismiss
-                </Button>
-              </Group>
-            </Group>
-          ))}
-        </Card>
-      )}
+            Hire an agent
+          </button>
+        </div>
+      </header>
 
       {board.frozen_roster && (
-        <Card withBorder padding="xs" style={{ borderColor: "var(--mantine-color-orange-5)" }}>
-          <Text size="sm" fw={600}>
-            Restart detected. Roster frozen — rehire the agents below.
-          </Text>
-        </Card>
+        <p className="board-banner ab-panel" role="alert">
+          Something restarted. The roster is frozen — rehire the agents below.
+        </p>
       )}
 
-      <div
-        ref={ref}
-        style={{
-          display: "flex",
-          gap: 10,
-          overflowX: "auto",
-          alignItems: "flex-start",
-          flex: 1,
-        }}
-      >
+      {board.alerts.length > 0 && (
+        <section className="ab-panel board-alerts" aria-label="workflow alerts">
+          <h2 className="font-display board-alerts-title">
+            Skipped steps
+            <span className="board-alerts-note">last 24 hours</span>
+          </h2>
+          {board.alerts.slice(0, 5).map((a) => (
+            <div key={a.key} className="board-alert">
+              <span className="board-alert-msg">{a.message}</span>
+              <span className="board-alert-actions">
+                <button
+                  type="button"
+                  className="ab-btn board-mini"
+                  onClick={() => api.remind(a.pane)}
+                >
+                  Remind agent
+                </button>
+                <button
+                  type="button"
+                  className="ab-btn board-mini"
+                  onClick={() => api.dismiss(a.key)}
+                >
+                  Dismiss
+                </button>
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      <div ref={ref} className="board-columns">
         {board.columns.map((col) => {
           const colCards = cards.filter((c) => c.column === col);
+          const count = col === "Parked" ? board.worktrees.length : colCards.length;
           return (
-            <Box
+            <section
               key={col}
-              style={{ minWidth: 220, flex: "1 0 220px" }}
+              className="board-col"
+              data-col={col.toLowerCase().replace(" ", "-")}
               aria-label={`column ${col}`}
             >
-              <Group justify="space-between" mb={6}>
-                <Text size="sm" fw={600}>
-                  {col}
-                </Text>
-                <Badge size="xs" variant="light">
-                  {col === "Parked" ? board.worktrees.length : colCards.length}
-                </Badge>
-              </Group>
-              <ScrollArea h="calc(100vh - 220px)">
-                <Stack gap="xs">
+              <header className="board-col-head">
+                <h2 className="font-display board-col-title">{col}</h2>
+                <span className="board-col-count" aria-hidden>
+                  {count}
+                </span>
+              </header>
+              <ScrollArea h="calc(100vh - 280px)" type="hover">
+                <Stack gap="xs" pt={6}>
                   {col === "Parked" ? (
                     <WorktreeCards
                       worktrees={board.worktrees}
                       onRehire={(w) => {
                         setHirePreset({
                           folder: w.path,
-                          name: w.branch.replace(/^refs\/heads\//, "").split("/").pop() || "agent",
+                          name:
+                            w.branch
+                              .replace(/^refs\/heads\//, "")
+                              .split("/")
+                              .pop() || "agent",
                         });
                         setHireOpen(true);
                       }}
@@ -341,27 +343,29 @@ export function BoardView({
                   )}
                 </Stack>
               </ScrollArea>
-            </Box>
+            </section>
           );
         })}
       </div>
 
       {board.closed.length > 0 && (
-        <Group gap="xs">
-          <Text size="xs" c="dimmed">
-            Closed (rehirable 24h):
-          </Text>
-          {board.closed.map((c) => (
-            <Badge
-              key={c.pane}
-              size="sm"
-              style={{ cursor: "pointer" }}
-              onClick={() => api.rehire(c.pane)}
-            >
-              rehire {c.name || c.pane}
-            </Badge>
-          ))}
-        </Group>
+        <footer className="board-closed ab-panel">
+          <span className="board-closed-label">
+            Closed, rehirable for 24 hours
+          </span>
+          <span className="board-closed-list">
+            {board.closed.map((c) => (
+              <button
+                key={c.pane}
+                type="button"
+                className="ab-btn board-mini"
+                onClick={() => api.rehire(c.pane)}
+              >
+                Rehire {c.name || c.pane}
+              </button>
+            ))}
+          </span>
+        </footer>
       )}
 
       <HireModal
@@ -370,6 +374,6 @@ export function BoardView({
         onDone={() => undefined}
         preset={hirePreset}
       />
-    </Stack>
+    </div>
   );
 }

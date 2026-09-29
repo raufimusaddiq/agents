@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Button, Card, PasswordInput, Stack, Text, Title } from "@mantine/core";
+import { PasswordInput, Stack } from "@mantine/core";
 import { api } from "../api";
 
 export function Login({ onSuccess }: { onSuccess: () => void }) {
@@ -25,18 +25,20 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
   }
 
   return (
-    <main
-      style={{
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "center",
-        height: "100vh",
-      }}
-    >
-      <Card withBorder padding="lg" w={340}>
-        <Title order={1} mb="sm" size="h3">
-          Agent Board
-        </Title>
+    <main className="login-shell">
+      <div className="ab-panel login-card">
+        <p className="login-marquee">
+          <span className="ar-mark" aria-hidden>
+            ▮
+          </span>
+          Staff only
+        </p>
+        <h1 className="font-display login-wordmark">
+          Agent&nbsp;Board
+        </h1>
+        <p className="login-tag">
+          The board that types into your agents. Log in to take the shift.
+        </p>
         <Stack gap="sm">
           <PasswordInput
             label="Password"
@@ -47,16 +49,17 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
             }}
             aria-label="board password"
           />
-          {error && (
-            <Text c="red" size="xs">
-              {error}
-            </Text>
-          )}
-          <Button onClick={submit} loading={busy}>
-            Sign in
-          </Button>
+          {error && <p className="hire-error">{error}</p>}
+          <button
+            type="button"
+            className="ab-btn hire-submit login-go"
+            onClick={submit}
+            disabled={busy}
+          >
+            {busy ? "Checking…" : "Sign in"}
+          </button>
         </Stack>
-      </Card>
+      </div>
     </main>
   );
 }

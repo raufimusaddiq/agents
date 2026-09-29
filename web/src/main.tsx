@@ -97,21 +97,9 @@ function App() {
   }
 
   return (
-    <main
-      style={{
-        display: "flex",
-        gap: 12,
-        padding: 12,
-        height: "100vh",
-        boxSizing: "border-box",
-      }}
-    >
-      <h1
-        style={{ position: "absolute", left: -9999, width: 1, height: 1, overflow: "hidden" }}
-      >
-        Agent Board
-      </h1>
-      <div style={{ flex: selected ? "1 1 60%" : "1 1 100%", minWidth: 0 }}>
+    <main className="app-shell">
+      <h1 className="visually-hidden">Agent Board</h1>
+      <div className="app-board">
         <BoardView
           board={board}
           theme={colorScheme}
@@ -123,7 +111,7 @@ function App() {
         />
       </div>
       {selected && (
-        <div style={{ flex: "1 1 40%", minWidth: 320 }}>
+        <div className="app-panel">
           <AgentPanel pane={selected} onClose={() => setSelected(null)} />
         </div>
       )}
@@ -133,7 +121,36 @@ function App() {
 
 export default function Root() {
   return (
-    <MantineProvider defaultColorScheme="dark" theme={{ primaryShade: { light: 8, dark: 7 } }}>
+    <MantineProvider
+      defaultColorScheme="dark"
+      theme={{
+        fontFamily: "Space Grotesk, ui-sans-serif, system-ui, sans-serif",
+        headings: {
+          fontFamily: "Bungee, Arial Black, system-ui, sans-serif",
+          fontWeight: "400",
+        },
+        defaultRadius: 0,
+        radius: { xs: "0px", sm: "0px", md: "0px", lg: "0px", xl: "0px" },
+        primaryColor: "signal",
+        primaryShade: { light: 6, dark: 5 },
+        colors: {
+          // Retro control-room signals. Shade 5/6 used for filled controls so
+          // white text clears WCAG AA on the light theme.
+          signal: [
+            "#ffd9c9",
+            "#ffb69c",
+            "#f88f6e",
+            "#ef6a45",
+            "#e4572e",
+            "#c8481f",
+            "#a53a19",
+            "#822d13",
+            "#5f210e",
+            "#3d1509",
+          ],
+        },
+      }}
+    >
       <App />
     </MantineProvider>
   );

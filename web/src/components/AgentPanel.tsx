@@ -1,216 +1,183 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Badge,
-  Box,
-  Button,
-  Card,
-  Divider,
-  Group,
-  ScrollArea,
-  Stack,
-  Tabs,
-  Text,
-  Textarea,
-} from "@mantine/core";
+import { ScrollArea, Tabs, Textarea } from "@mantine/core";
 import type { Agent, ChatRow } from "../types";
 import { api } from "../api";
 import { AnswerCard } from "./AnswerCard";
 
 function ChatThread({ rows }: { rows: ChatRow[] }) {
   return (
-    <Stack gap="xs">
+    <div className="chat-thread">
       {rows.map((r, i) => {
         if (r._fold) {
           return (
-            <Text key={i} size="xs" c="dimmed" style={{ fontFamily: "monospace" }}>
+            <p key={i} className="chat-fold mono">
               {r._fold}
               {r.path ? ` ${r.path}` : ""}
               {r.command ? ` $ ${r.command.slice(0, 80)}` : ""}
               {r.subagent_type ? ` [${r.subagent_type}]` : ""}
               {r._count && r._count > 1 ? ` ×${r._count}` : ""}
-            </Text>
+            </p>
           );
         }
         const isUser = r.kind === "prompt";
         const isAnswer = r.kind === "answer" || r.kind === "question";
         return (
-          <Box
+          <div
             key={i}
-            p="xs"
-            style={{
-              borderRadius: 6,
-              alignSelf: isUser || isAnswer ? "flex-start" : "flex-end",
-              maxWidth: "85%",
-              background: isAnswer
-                ? "var(--ab-answer)"
-                : isUser
-                  ? "var(--ab-user)"
-                  : "var(--ab-reply)",
-            }}
+            className={
+              "chat-line " +
+              (isAnswer ? "is-question" : isUser ? "is-you" : "is-agent")
+            }
           >
-            <Text size="xs" c="dimmed" fw={600}>
+            <span className="chat-who">
               {isAnswer ? "question" : isUser ? "you" : "agent"}
-            </Text>
-            <Text
-              size="sm"
-              style={{ whiteSpace: "pre-wrap" }}
+            </span>
+            <p
+              className="chat-text"
               data-testid={`chat-${r.kind}`}
             >
               {r.answer || r.text}
-            </Text>
-          </Box>
+            </p>
+          </div>
         );
       })}
-    </Stack>
+    </div>
   );
 }
 
 function CodeChanges({ agent }: { agent: Agent }) {
   const [diff, setDiff] = useState<{ title: string; body: string } | null>(null);
   const g = agent.git;
-  if (!g) return <Text c="dimmed">No git repository for this agent.</Text>;
+  if (!g) return <p className="panel-empty">No git repository for this agent.</p>;
   return (
-    <Stack gap="sm">
-      <Card withBorder padding="sm">
-        <Group justify="space-between">
-          <Text fw={600} size="sm">
-            {g.branch}
-            {g.upstream ? ` → ${g.upstream}` : " (no upstream)"}
-          </Text>
-          <Group gap="xs">
-            {g.ahead != null && <Badge size="xs">↑{g.ahead}</Badge>}
-            {g.behind != null && <Badge size="xs">↓{g.behind}</Badge>}
-            {g.unpushed_commits != null && (
-              <Badge size="xs" color={g.unpushed_commits ? "orange" : "gray"}>
-                {g.unpushed_commits} unpushed
-              </Badge>
-            )}
-          </Group>
-        </Group>
-      </Card>
-      <Text fw={600} size="sm">
-        Changed files (read-only)
-      </Text>
-      <Stack gap={4}>
+    <div className="panel-stack">
+      <div className="branch-bar">
+        <span className="branch-name mono">
+          {g.branch}
+          {g.upstream ? ` → ${g.upstream}` : " (no upstream)"}
+        </span>
+        <span className="branch-badges">
+          {g.ahead != null && <span className="park-chip">↑{g.ahead}</span>}
+          {g.behind != null && <span className="park-chip">↓{g.behind}</span>}
+          {g.unpushed_commits != null && (
+            <span className={g.unpushed_commits ? "park-chip is-warn" : "park-chip"}>
+              {g.unpushed_commits} unpushed
+            </span>
+          )}
+        </span>
+      </div>
+
+      <h3 className="panel-h">Changed files</h3>
+      <p className="panel-note">Read-only. The board never writes to your repo.</p>
+      <ul className="file-list">
         {g.files.map((f) => (
-          <Group
-            key={f.path}
-            justify="space-between"
-            style={{ cursor: "pointer" }}
-            onClick={() =>
-              api
-                .diff(g.repo, { path: f.path })
-                .then((r) => setDiff({ title: f.path, body: r.diff }))
-            }
-          >
-            <Text size="xs" style={{ fontFamily: "monospace" }} truncate>
-              {f.status ? `[${f.status}] ` : ""}
-              {f.path}
-            </Text>
-            <Text size="xs" c="dimmed">
-              +{f.added} -{f.removed}
-            </Text>
-          </Group>
+          <li key={f.path}>
+            <button
+              type="button"
+              className="file-row"
+              onClick={() =>
+                api
+                  .diff(g.repo, { path: f.path })
+                  .then((r) => setDiff({ title: f.path, body: r.diff }))
+              }
+            >
+              <span className="file-path mono">
+                {f.status ? `${f.status} ` : ""}
+                {f.path}
+              </span>
+              <span className="file-stat">
+                +{f.added} −{f.removed}
+              </span>
+            </button>
+          </li>
         ))}
         {g.files.length === 0 && (
-          <Text size="xs" c="dimmed">
-            Clean working tree.
-          </Text>
+          <li className="panel-empty">Clean working tree.</li>
         )}
-        {g.files_capped && <Text size="xs" c="dimmed">(capped at 300 files)</Text>}
-      </Stack>
-      <Divider />
-      <Text fw={600} size="sm">
-        Last 15 commits
-      </Text>
-      <Stack gap={4}>
+      </ul>
+      {g.files_capped && <p className="panel-note">Capped at 300 files.</p>}
+
+      <h3 className="panel-h">Last 15 commits</h3>
+      <ul className="file-list">
         {g.commits.map((c) => (
-          <Group
-            key={c.sha}
-            justify="space-between"
-            style={{ cursor: "pointer" }}
-            onClick={() =>
-              api
-                .diff(g.repo, { sha: c.sha })
-                .then((r) => setDiff({ title: c.short, body: r.diff }))
-            }
-          >
-            <Text size="xs" truncate>
-              <Text span c="dimmed" size="xs">
-                {c.short}{" "}
-              </Text>
-              {c.subject}
-            </Text>
-            <Badge size="xs" color={c.pushed ? "green" : "orange"}>
-              {c.pushed ? "pushed" : "local"}
-            </Badge>
-          </Group>
-        ))}
-      </Stack>
-      {diff && (
-        <Box>
-          <Group justify="space-between">
-            <Text fw={600} size="sm">
-              Diff: {diff.title}
-            </Text>
-            <Button size="xs" variant="subtle" onClick={() => setDiff(null)}>
-              close
-            </Button>
-          </Group>
-          <ScrollArea h={300}>
-            <Text
-              size="xs"
-              style={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}
+          <li key={c.sha}>
+            <button
+              type="button"
+              className="file-row"
+              onClick={() =>
+                api
+                  .diff(g.repo, { sha: c.sha })
+                  .then((r) => setDiff({ title: c.short, body: r.diff }))
+              }
             >
-              {diff.body || "(empty)"}
-            </Text>
+              <span className="file-path">
+                <span className="mono commit-sha">{c.short}</span> {c.subject}
+              </span>
+              <span className={c.pushed ? "park-chip is-ok" : "park-chip is-warn"}>
+                {c.pushed ? "pushed" : "local"}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {diff && (
+        <div className="diff-box">
+          <div className="diff-head">
+            <span className="panel-h">Diff · {diff.title}</span>
+            <button
+              type="button"
+              className="ab-btn board-mini"
+              onClick={() => setDiff(null)}
+            >
+              Close
+            </button>
+          </div>
+          <ScrollArea h={280}>
+            <pre className="diff-body">{diff.body || "(empty)"}</pre>
           </ScrollArea>
-        </Box>
+        </div>
       )}
-    </Stack>
+    </div>
   );
 }
 
 function Workflow({ agent }: { agent: Agent }) {
   return (
-    <Stack gap="sm">
+    <div className="panel-stack">
       {agent.alerts.length === 0 && (
-        <Text size="sm" c="dimmed">
-          No workflow alerts for this agent.
-        </Text>
+        <p className="panel-empty">No skipped steps for this agent.</p>
       )}
       {agent.alerts.map((a) => (
-        <Card key={a.key} withBorder padding="sm">
-          <Text size="sm">{a.message}</Text>
-          <Group mt="xs" gap="xs">
-            <Button
-              size="xs"
-              variant="light"
+        <div key={a.key} className="alert-card">
+          <p>{a.message}</p>
+          <div className="alert-actions">
+            <button
+              type="button"
+              className="ab-btn board-mini"
               onClick={() => api.remind(a.pane).then(() => undefined)}
             >
               Remind agent
-            </Button>
-            <Button
-              size="xs"
-              variant="subtle"
-              color="gray"
+            </button>
+            <button
+              type="button"
+              className="ab-btn board-mini"
               onClick={() => api.dismiss(a.key).then(() => undefined)}
             >
               Dismiss
-            </Button>
-          </Group>
-        </Card>
+            </button>
+          </div>
+        </div>
       ))}
-      <Divider />
-      <Text fw={600} size="sm">
-        Capability notes
-      </Text>
-      {agent.notes.map((n) => (
-        <Text key={n} size="xs" c="dimmed">
-          {n}
-        </Text>
-      ))}
-    </Stack>
+      <h3 className="panel-h">What this harness reports</h3>
+      <ul className="cap-list">
+        {agent.notes.map((n) => (
+          <li key={n} className="cap-note">
+            {n}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -218,52 +185,55 @@ function Safety({ agent }: { agent: Agent }) {
   const g = agent.git;
   const status = agent.status as Record<string, unknown>;
   return (
-    <Stack gap="sm">
-      <Text fw={600} size="sm">
-        Safe to restart?
-      </Text>
-      <Text size="sm">
-        Uncommitted files: {g ? g.files.length : "no repo"}
-      </Text>
-      <Text size="sm">
-        Commits on no remote:{" "}
-        {g && g.has_remote ? (g.unpushed_commits ?? 0) : "none"}
-      </Text>
-      <Text size="sm">
-        Working: {String(agent.status?.model ?? "unknown")}{" "}
-        {String(agent.pane)}
-      </Text>
-      <Text size="sm">
-        Context %: {status.context_pct != null ? `${status.context_pct}%` : "not reported"}
-      </Text>
+    <div className="panel-stack">
+      <h3 className="panel-h">Safe to restart?</h3>
+      <dl className="safety-list">
+        <div>
+          <dt>Uncommitted files</dt>
+          <dd>{g ? g.files.length : "no repo"}</dd>
+        </div>
+        <div>
+          <dt>Commits on no remote</dt>
+          <dd>{g && g.has_remote ? (g.unpushed_commits ?? 0) : "none"}</dd>
+        </div>
+        <div>
+          <dt>Model</dt>
+          <dd>{String(agent.status?.model ?? "not reported")}</dd>
+        </div>
+        <div>
+          <dt>Context used</dt>
+          <dd>
+            {status.context_pct != null
+              ? `${status.context_pct}%`
+              : `not reported by ${agent.kind}`}
+          </dd>
+        </div>
+      </dl>
+
       {agent.usage_history.length > 1 && (
-        <Box>
-          <Text fw={600} size="sm">
-            5h usage trend (45m)
-          </Text>
-          <Group gap={2} align="flex-end" h={40}>
+        <div>
+          <h3 className="panel-h">5-hour usage, last 45 minutes</h3>
+          <div className="trend" aria-hidden>
             {agent.usage_history.map(([, pct], i) => (
-              <Box
+              <span
                 key={i}
-                w={6}
-                h={(pct / 100) * 40}
-                bg="blue"
-                aria-hidden
+                className="trend-bar"
+                style={{ height: `${Math.max(3, (pct / 100) * 44)}px` }}
               />
             ))}
-          </Group>
-        </Box>
+          </div>
+        </div>
       )}
-      <Divider />
-      <Text fw={600} size="sm">
-        What the harness reports
-      </Text>
-      {Object.entries(agent.supports).map(([k, v]) => (
-        <Text key={k} size="xs" c={v ? undefined : "dimmed"}>
-          {k}: {v ? "yes" : `not reported by ${agent.kind}`}
-        </Text>
-      ))}
-    </Stack>
+
+      <h3 className="panel-h">Harness capabilities</h3>
+      <ul className="cap-list">
+        {Object.entries(agent.supports).map(([k, v]) => (
+          <li key={k} className={v ? "cap-on" : "cap-off"}>
+            {k}: {v ? "yes" : `not reported by ${agent.kind}`}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -303,64 +273,68 @@ export function AgentPanel({
   if (!pane || !agent) return null;
 
   return (
-    <Card
-      withBorder
-      padding="md"
-      style={{ height: "100%", overflow: "auto" }}
+    <section
+      className="ab-panel agent-panel"
       aria-label={`agent panel ${agent.name}`}
     >
-      <Group justify="space-between">
-        <Group>
-          <Text fw={700}>{agent.name}</Text>
-          <Badge>{agent.kind}</Badge>
-          <Text size="xs" c="dimmed">
-            {agent.pane}
-          </Text>
-        </Group>
-        <Group>
-          <Button
-            size="xs"
-            variant="light"
+      <header className="panel-head">
+        <div className="panel-id">
+          <span className="font-display panel-name">{agent.name}</span>
+          <span className="panel-kind">{agent.kind}</span>
+          <span className="panel-pane mono">{agent.pane}</span>
+        </div>
+        <div className="panel-actions">
+          <button
+            type="button"
+            className="ab-btn board-mini"
             onClick={() => api.focus(agent.pane)}
           >
-            Open terminal (focus pane)
-          </Button>
-          <Button size="xs" variant="subtle" color="gray" onClick={onClose}>
-            close
-          </Button>
-        </Group>
-      </Group>
+            Open terminal
+          </button>
+          <button
+            type="button"
+            className="ab-btn board-mini"
+            aria-label="close agent panel"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+      </header>
 
       {agent.ask && (
-        <Box mt="sm">
+        <div className="panel-ask">
           <AnswerCard pane={agent.pane} ask={agent.ask} onDone={load} />
-        </Box>
+        </div>
       )}
 
-      <Tabs defaultValue="chat" mt="md">
+      <Tabs defaultValue="chat" className="panel-tabs">
         <Tabs.List>
           <Tabs.Tab value="chat">Chat</Tabs.Tab>
           <Tabs.Tab value="code">Code changes</Tabs.Tab>
           <Tabs.Tab value="workflow">Workflow</Tabs.Tab>
           <Tabs.Tab value="safety">Safety</Tabs.Tab>
         </Tabs.List>
+
         <Tabs.Panel value="chat" pt="sm">
-          <ScrollArea h={400}>
+          <ScrollArea h={360}>
             <ChatThread rows={agent.chat} />
           </ScrollArea>
-          <Group mt="sm" align="flex-end">
+          <div className="composer">
             <Textarea
               style={{ flex: 1 }}
               autosize
               minRows={1}
               maxRows={4}
-              placeholder="Message the agent…"
+              placeholder="Message the agent"
               value={msg}
               onChange={(e) => setMsg(e.currentTarget.value)}
               aria-label="message agent"
             />
-            <Button
-              loading={loading}
+            <button
+              type="button"
+              className="ab-btn hire-submit"
+              disabled={loading}
               onClick={async () => {
                 if (!msg.trim()) return;
                 setLoading(true);
@@ -373,25 +347,21 @@ export function AgentPanel({
                 }
               }}
             >
-              Send
-            </Button>
-          </Group>
+              {loading ? "Sending…" : "Send"}
+            </button>
+          </div>
           {agent.screen_tail && agent.screen_tail.length > 0 && (
-            <Box mt="md">
-              <Text size="xs" c="dimmed" fw={600}>
-                Live screen tail (fallback)
-              </Text>
-              <ScrollArea h={160}>
-                <Text
-                  size="xs"
-                  style={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}
-                >
+            <div className="screen-tail">
+              <h3 className="panel-h">Live screen (fallback)</h3>
+              <ScrollArea h={150}>
+                <pre className="diff-body">
                   {agent.screen_tail.slice(-30).join("\n")}
-                </Text>
+                </pre>
               </ScrollArea>
-            </Box>
+            </div>
           )}
         </Tabs.Panel>
+
         <Tabs.Panel value="code" pt="sm">
           <CodeChanges agent={agent} />
         </Tabs.Panel>
@@ -402,6 +372,6 @@ export function AgentPanel({
           <Safety agent={agent} />
         </Tabs.Panel>
       </Tabs>
-    </Card>
+    </section>
   );
 }

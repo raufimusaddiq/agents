@@ -1,15 +1,5 @@
 import { useState } from "react";
-import {
-  Badge,
-  Button,
-  Card,
-  Checkbox,
-  Group,
-  Radio,
-  Stack,
-  Text,
-  TextInput,
-} from "@mantine/core";
+import { Checkbox, Radio, Stack, TextInput } from "@mantine/core";
 import type { Ask } from "../types";
 import { api } from "../api";
 
@@ -52,27 +42,23 @@ export function AnswerCard({
   }
 
   return (
-    <Card
-      withBorder
-      padding="sm"
-      style={{ borderColor: "var(--mantine-color-yellow-6)" }}
-      aria-label={`needs you ${pane}`}
-    >
-      <Text fw={600} size="sm" mb={6}>
-        Needs you
-      </Text>
+    <div className="answer-card" aria-label={`needs you ${pane}`}>
+      <p className="answer-flag">
+        <span className="ar-mark" aria-hidden>
+          ▮
+        </span>
+        This agent needs you
+      </p>
       {ask.tabs.length > 0 && (
-        <Group gap={4} mb={6}>
+        <div className="answer-tabs">
           {ask.tabs.map((t) => (
-            <Badge key={t} size="xs" variant="light">
+            <span key={t} className="park-chip">
               {t}
-            </Badge>
+            </span>
           ))}
-        </Group>
+        </div>
       )}
-      <Text size="sm" mb={8} style={{ whiteSpace: "pre-wrap" }}>
-        {ask.question}
-      </Text>
+      <p className="answer-q">{ask.question}</p>
       {ask.options.length > 0 ? (
         <Stack gap="xs">
           {ask.options.map((o, i) => (
@@ -99,63 +85,54 @@ export function AnswerCard({
                 />
               )}
               {o.description && (
-                <Text size="xs" c="dimmed" ml={24}>
-                  {o.description}
-                </Text>
+                <p className="answer-desc">{o.description}</p>
               )}
               {o.preview && (
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  ml={24}
-                  style={{ whiteSpace: "pre-wrap", fontFamily: "monospace" }}
-                >
-                  {o.preview}
-                </Text>
+                <pre className="answer-preview">{o.preview}</pre>
               )}
             </div>
           ))}
         </Stack>
       ) : (
-        <Text size="xs" c="dimmed" mb={6}>
-          No numbered options. Use the arrow keys below, or type an answer.
-        </Text>
+        <p className="answer-desc">
+          No choices to pick from. Type an answer, or use the keys below.
+        </p>
       )}
       <TextInput
         mt="sm"
-        placeholder="Type an answer (never guessed)"
+        placeholder="Type an answer"
         value={typed}
         onChange={(e) => setTyped(e.currentTarget.value)}
         aria-label="typed answer"
       />
-      {error && (
-        <Text c="red" size="xs" mt={4}>
-          {error}
-        </Text>
-      )}
-      <Group mt="sm" gap="xs">
-        <Button size="xs" onClick={submit} loading={busy}>
-          Answer
-        </Button>
-        <Button
-          size="xs"
-          variant="light"
-          color="gray"
+      {error && <p className="hire-error">{error}</p>}
+      <div className="answer-actions">
+        <button
+          type="button"
+          className="ab-btn hire-submit"
+          onClick={submit}
+          disabled={busy}
+        >
+          {busy ? "Sending…" : "Send answer"}
+        </button>
+        <button
+          type="button"
+          className="ab-btn board-mini"
           onClick={() => api.keys(pane, ["esc"]).then(onDone)}
         >
-          Esc
-        </Button>
+          Cancel
+        </button>
         {["up", "down", "left", "right", "enter"].map((k) => (
-          <Button
+          <button
             key={k}
-            size="xs"
-            variant="subtle"
+            type="button"
+            className="ab-btn board-mini"
             onClick={() => api.keys(pane, [k]).then(onDone)}
           >
             {k}
-          </Button>
+          </button>
         ))}
-      </Group>
-    </Card>
+      </div>
+    </div>
   );
 }
