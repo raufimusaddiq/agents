@@ -56,6 +56,8 @@ DEFAULT_CONFIG = {
     "auth": {"password_hash": "", "session_hours": 12,
              "lockout_attempts": 10, "lockout_minutes": 15},
     "roster": {"max_closed": 30, "closed_ttl_hours": 24, "save_seconds": 60},
+    "ticket": {"sources": ["worktree", "branch_ticket", "branch", "tab",
+                           "prompt", "repo"], "first_prompt_len": 48},
     "workflow": {"recompute_seconds": 10, "git_reread_seconds": 60},
 }
 
@@ -485,25 +487,6 @@ def git_diff_commit(repo: str, sha: str) -> str:
     return diff if rc == 0 else ""
 
 
-def git_worktrees(repo: str) -> list[dict]:
-    rc, out = git(repo, "worktree", "list", "--porcelain")
-    if rc != 0:
-        return []
-    trees, cur = [], {}
-    for line in out.splitlines():
-        if line.startswith("worktree "):
-            if cur:
-                trees.append(cur)
-            cur = {"path": line[9:]}
-        elif line.startswith("branch "):
-            cur["branch"] = line[7:]
-        elif line.strip() == "detached":
-            cur["detached"] = True
-    if cur:
-        trees.append(cur)
-    return trees
-
-
 # --------------------------------------------------------------------------
 # state store
 # --------------------------------------------------------------------------
@@ -929,6 +912,106 @@ def compute_stations(rec: dict, events: list[dict], repo: str | None) -> dict:
     first_open = next((s for s, st in order if st in ("in_progress", "todo")), None)
     return {"stations": order, "current": first_open,
             "skipped": sorted(skipped)}
+
+
+STAGE_ORDER = ["To do", "In progress", "Testing", "Review", "Ready to push",
+               "Shipped"]
+# Which station implies which board stage, furthest last.
+_STATION_TO_STAGE = {
+    "Start check": "To do",
+    "Branch": "To do",
+    "Code": "In progress",
+    "Tests": "Testing",
+    "Review": "Review",
+    "Commit": "Ready to push",
+    "Docs": "Ready to push",
+    "Push": "Shipped",
+    "PR": "Shipped",
+}
+
+
+def agent_stage(rec: dict, events: list[dict], repo: str | None) -> str:
+    """The furthest work stage this one agent has reached."""
+    stations = compute_stations(rec, events, repo)
+    best = 0
+    for name, state in stations["stations"]:
+        if state != "done":
+            continue
+        idx = STAGE_ORDER.index(_STATION_TO_STAGE.get(name, "To do"))
+        best = max(best, idx)
+    return STAGE_ORDER[best]
+
+
+def ticket_stage(agents: list[dict]) -> str:
+    """A ticket's stage is the furthest stage reached by any of its agents."""
+    best = 0
+    for a in agents:
+        st = a.get("stage", "To do")
+        if st in STAGE_ORDER:
+            best = max(best, STAGE_ORDER.index(st))
+    return STAGE_ORDER[best]
+
+
+def _first_prompt(events: list[dict], limit: int = 48) -> str:
+    """First real user prompt, skipping slash commands and harness noise."""
+    for e in events:
+        if e.get("kind") != "prompt":
+            continue
+        text = (e.get("text") or "").strip()
+        if not text or text.startswith("/"):
+            continue
+        first = text.splitlines()[0].strip()
+        if first:
+            return first[:limit]
+    return ""
+
+
+def _branch_ticket(b: str) -> str:
+    b = (b or "").replace("refs/heads/", "")
+    m = TICKET_RE.search(b)
+    return m.group(0) if m else b
+
+
+def derive_ticket(rec: dict, events: list[dict], repo: str | None,
+                  branch: str, worktree_branch: str = "") -> dict:
+    """Infer the work item an agent is on. First match wins.
+
+    Order is configurable via config.json -> ticket.sources. Every result
+    carries `source` so a wrong grouping is visible in the UI rather than
+    silent. Never guesses: each source is a concrete observed value.
+    """
+    cfg = config().get("ticket", {})
+    sources = cfg.get("sources", ["worktree", "branch_ticket", "branch",
+                                  "tab", "prompt", "repo"])
+    prompt_len = int(cfg.get("first_prompt_len", 48))
+
+    for src in sources:
+        if src == "worktree" and worktree_branch:
+            return {"id": _branch_ticket(worktree_branch),
+                    "name": _branch_ticket(worktree_branch),
+                    "source": "worktree branch"}
+        if src == "branch_ticket" and branch:
+            m = TICKET_RE.search(branch)
+            if m:
+                return {"id": m.group(0), "name": m.group(0),
+                        "source": "branch ticket"}
+        if src == "branch" and branch and branch not in ("main", "master", "?"):
+            return {"id": _branch_ticket(branch), "name": _branch_ticket(branch),
+                    "source": "branch"}
+        if src == "tab":
+            label = (rec.get("tab_label") or "").strip()
+            if label and not label.isdigit():
+                return {"id": label, "name": label, "source": "tab label"}
+        if src == "prompt":
+            p = _first_prompt(events, prompt_len)
+            if p:
+                return {"id": p, "name": p, "source": "first prompt"}
+        if src == "repo" and repo:
+            b = branch or "?"
+            return {"id": f"{os.path.basename(repo)} · {b}",
+                    "name": f"{os.path.basename(repo)} · {b}",
+                    "source": "repo"}
+    return {"id": "Unnamed work", "name": "Unnamed work", "source": ""}
 
 
 def _detect_alerts() -> None:
@@ -1513,6 +1596,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/worktree_remove":
             self._worktree_remove()
             return
+        if path == "/api/worktree_create":
+            self._worktree_create()
+            return
+        if path == "/api/worktree_open":
+            self._worktree_open()
+            return
+        if path == "/api/fire":
+            self._fire()
+            return
         if path == "/api/diff":
             self._diff()
             return
@@ -1698,6 +1790,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         message = str(body.get("message", ""))[:8000]
         workspace = str(body.get("workspace", "new"))[:64]
         workspace_label = str(body.get("workspace_label", ""))[:64]
+        use_worktree = bool(body.get("use_worktree"))
+        worktree_branch = str(body.get("worktree_branch", ""))[:120]
+        worktree_base = str(body.get("worktree_base", ""))[:120]
+        yolo = bool(body.get("yolo"))
         if kind not in ADAPTERS:
             self._json(400, {"error": "bad_kind"})
             return
@@ -1710,13 +1806,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 os.path.realpath(home)):
             self._json(400, {"error": "bad_folder"})
             return
+        if use_worktree and not repo_root(folder):
+            self._json(400, {"error": "not_a_repo"})
+            return
         try:
-            _hire_impl(kind, folder, name, message, workspace, workspace_label)
+            _hire_impl(kind, folder, name, message, workspace, workspace_label,
+                       use_worktree, worktree_branch, worktree_base, yolo)
         except HerdrError as e:
             self._json(409, {"error": e.code, "message": str(e)})
             return
         audit("user", "hire", extra={"kind": kind, "name": name,
-                                     "workspace": workspace})
+                                     "workspace": workspace,
+                                     "worktree": use_worktree, "yolo": yolo})
         STATE.changed()
         self._json(200, {"ok": True})
 
@@ -1785,6 +1886,100 @@ class Handler(http.server.BaseHTTPRequestHandler):
         audit("user", "worktree_remove", extra={"path": path})
         STATE.changed()
         self._json(200, {"ok": True})
+
+    def _worktree_create(self):
+        """Create a git worktree-backed workspace via native herdr.
+
+        Measured 0.9.2: `herdr worktree create --cwd <repo> --branch <name>
+        [--base <ref>] [--path <path>] [--label <text>] --no-focus`.
+        """
+        body = self._read_json()
+        repo = str(body.get("repo", ""))
+        branch = str(body.get("branch", ""))[:120]
+        base = str(body.get("base", ""))[:120]
+        label = str(body.get("label", ""))[:64]
+        home = os.path.expanduser("~")
+        if not repo or not os.path.isdir(repo) or not repo_root(repo):
+            self._json(400, {"error": "bad_repo"})
+            return
+        if not branch or not re.match(r"^[A-Za-z0-9._/-]+$", branch):
+            self._json(400, {"error": "bad_branch"})
+            return
+        args = ["worktree", "create", "--cwd", repo, "--branch", branch,
+                "--no-focus"]
+        if base:
+            args += ["--base", base]
+        if label:
+            args += ["--label", label]
+        try:
+            herdr(*args, timeout=60)
+        except HerdrError as e:
+            self._json(409, {"error": e.code, "message": str(e)})
+            return
+        _ = home
+        audit("user", "worktree_create",
+              extra={"repo": repo, "branch": branch})
+        STATE.changed()
+        self._json(200, {"ok": True})
+
+    def _worktree_open(self):
+        body = self._read_json()
+        path = str(body.get("path", ""))
+        if not path or not os.path.isdir(path):
+            self._json(400, {"error": "bad_path"})
+            return
+        try:
+            herdr("worktree", "open", "--path", path, "--no-focus", timeout=30)
+        except HerdrError as e:
+            self._json(409, {"error": e.code, "message": str(e)})
+            return
+        audit("user", "worktree_open", extra={"path": path})
+        STATE.changed()
+        self._json(200, {"ok": True})
+
+    def _fire(self):
+        """Fire an agent: close its pane, which stops the harness process.
+
+        Measured 0.9.2: closing a pane's sole tab removes the tab/workspace
+        too. The snapshot loop then moves the agent into 'closed', so it stays
+        rehirable from the roster like any other vanished agent.
+
+        If the agent owned a worktree, remove it too — but only when safe
+        (clean tree, no unpushed commits). Never uses --force.
+        """
+        body = self._read_json()
+        pane = str(body.get("pane", ""))
+        if not valid_pane(pane):
+            self._json(400, {"error": "bad_pane"})
+            return
+        with STATE.lock:
+            rec = STATE.agents.get(pane)
+        if not rec:
+            self._json(404, {"error": "no_agent"})
+            return
+        try:
+            herdr("pane", "close", pane, timeout=20)
+        except HerdrError as e:
+            self._json(409, {"error": e.code})
+            return
+        # Record it as closed now, so it is rehirable before the next snapshot.
+        with STATE.lock:
+            rec = STATE.agents.pop(pane, rec)
+            rec["closed_at"] = time.time()
+            STATE.closed.append(rec)
+            STATE.alerts = [a for a in STATE.alerts if a["pane"] != pane]
+        # Clear the agent's worktree after the pane is gone, so nothing is
+        # holding it open. A refusal is surfaced, never forced.
+        wt_result = ""
+        if rec.get("worktree_path"):
+            wt_result = remove_agent_worktree(rec)
+        audit("user", "fire", pane,
+              extra={"name": rec.get("name", ""),
+                     "worktree_removed": not wt_result,
+                     "worktree_skip": wt_result})
+        STATE.changed()
+        self._json(200, {"ok": True, "worktree_removed": not wt_result,
+                         "worktree_skip": wt_result})
 
     def _diff(self):
         body = self._read_json()
@@ -1871,88 +2066,127 @@ class Handler(http.server.BaseHTTPRequestHandler):
 # --------------------------------------------------------------------------
 
 def build_board() -> dict:
-    from adapters.base import Ask as _Ask
+    """Ticket-centric board: one row per work item, agents as chips.
+
+    The board's columns are work stages only. Agent runtime state
+    (idle/working/blocked/needs-you) is a lamp on the chip and a filter, never
+    a column, because an agent and a ticket have different lifecycles.
+    """
     with STATE.lock:
         agents = list(STATE.agents.values())
         events = {p: list(v) for p, v in STATE.events.items()}
         closed = list(STATE.closed)
         alerts = list(STATE.alerts)
         frozen = STATE.frozen_roster
-    tickets: dict[str, list] = {}
-    cards = []
+
+    wt_by_path = _worktree_index()
+    agent_rows: list[dict] = []
+    tickets: dict[str, dict] = {}
+
     for rec in agents:
         pane = rec["pane"]
         evs = events.get(pane, [])
-        repo = repo_root(rec.get("cwd") or "") or None
-        stations = compute_stations(rec, evs, repo)
+        cwd = rec.get("cwd") or ""
+        repo = repo_root(cwd) or None
         branch = ""
         if repo:
             rc, b = git(repo, "rev-parse", "--abbrev-ref", "HEAD")
             branch = b.strip() if rc == 0 else ""
-        tid = ""
-        m = TICKET_RE.search(branch) or TICKET_RE.search(rec.get("title", ""))
-        if m:
-            tid = m.group(0)
-        col = classify_column(rec, stations)
-        card = {
-            "pane": pane, "name": rec.get("name") or pane, "kind": rec.get("kind"),
-            "cwd": rec.get("cwd"), "repo": repo, "branch": branch,
-            "ticket": tid or "No ticket",
-            "stations": stations["stations"], "current_station": stations["current"],
-            "status": rec.get("status", {}),
-            "agent_status": rec.get("agent_status"),
+        wt = wt_by_path.get(os.path.realpath(cwd))
+        wt_branch = wt.get("branch", "") if wt else ""
+        stage = agent_stage(rec, evs, repo)
+        inferred = derive_ticket(rec, evs, repo, branch, wt_branch)
+        status = rec.get("status", {})
+        chip = {
+            "pane": pane,
+            "name": rec.get("name") or pane,
+            "kind": rec.get("kind"),
+            "agent_status": rec.get("agent_status", "unknown"),
             "needs_user": bool(rec.get("needs_user")),
-            "ask": rec.get("ask"),
+            "stage": stage,
             "last_line": _last_line(rec, evs),
-            "column": col,
-            "time_in_column": int(time.time() - rec.get("col_since", time.time())),
-            "unpushed": None,
-            "context_pct": rec.get("status", {}).get("context_pct"),
+            "context_pct": status.get("context_pct"),
+            "tab_label": rec.get("tab_label", ""),
+            "ws_label": rec.get("ws_label", ""),
         }
-        if repo:
-            rc, count = git(repo, "rev-list", "--count", "HEAD", "--not", "--remotes")
-            card["unpushed"] = int(count.strip() or 0) if rc == 0 else None
-        cards.append(card)
-        tickets.setdefault(card["ticket"], []).append(card)
+        agent_rows.append(chip)
+        tid = inferred["id"]
+        t = tickets.setdefault(tid, {
+            "id": tid, "name": inferred["name"], "source": inferred["source"],
+            "agents": [], "repo": repo, "branch": branch,
+            "worktree": wt_branch, "stage": "To do", "unpushed": None,
+            "needs_you_count": 0, "context_pct_max": None,
+        })
+        t["agents"].append(chip)
+        if wt_branch:
+            t["worktree"] = wt_branch
+        if repo and not t["branch"]:
+            t["branch"] = branch
+        if not t["source"]:
+            t["source"] = inferred["source"]
+        if chip["needs_user"]:
+            t["needs_you_count"] += 1
+        if chip["context_pct"] is not None:
+            t["context_pct_max"] = max(t["context_pct_max"] or 0,
+                                       chip["context_pct"])
 
-    wts = list_worktrees()
+    for t in tickets.values():
+        t["stage"] = ticket_stage(t["agents"])
+        repo = t.get("repo")
+        if repo:
+            rc, count = git(repo, "rev-list", "--count", "HEAD", "--not",
+                            "--remotes")
+            t["unpushed"] = int(count.strip() or 0) if rc == 0 else None
+
+    # Parked: worktrees with no agent inside.
+    parked = list_worktrees()
+
+    cols = STAGE_ORDER + ["Parked"]
+    ticket_list = sorted(tickets.values(),
+                         key=lambda x: (-STAGE_ORDER.index(x["stage"])
+                                        if x["stage"] in STAGE_ORDER else 0,
+                                        x["name"].lower()))
     return {
-        "cards": cards,
-        "tickets": {k: v for k, v in tickets.items()},
+        "tickets": ticket_list,
+        "agents": agent_rows,
+        # compat: the old per-agent card list and ticket map, one release.
+        "cards": _compat_cards(ticket_list),
         "alerts": [a for a in alerts if a["key"] not in STATE.handled][-50:],
         "closed": closed[-30:],
         "frozen_roster": frozen,
-        "worktrees": wts,
+        "worktrees": parked,
         "remote_on": config()["remote"]["mode"] != "none",
-        "columns": ["Idle", "In progress", "Testing", "Review", "Needs you",
-                    "Ready to push", "Shipped", "Parked"],
+        "columns": cols,
+        "stages": STAGE_ORDER,
         "now": int(time.time()),
     }
 
 
-def classify_column(rec: dict, stations: dict) -> str:
-    if rec.get("needs_user") or rec.get("ask"):
-        return "Needs you"
-    kinds = set()
-    for e in STATE.events.get(rec["pane"], []):
-        if e.get("kind") == "bash":
-            kinds.update(classify_git(e.get("command", "")))
-    done = {s for s, st in stations["stations"] if st == "done"}
-    if "PR" in done or "Push" in done:
-        return "Shipped"
-    if "Commit" in done:
-        return "Ready to push"
-    if "Tests" in done or any(e.get("kind") == "subagent_start" and "test" in
-                              e.get("subagent_type", "").lower()
-                              for e in STATE.events.get(rec["pane"], [])):
-        return "Testing"
-    if "Review" in done or any("review" in e.get("subagent_type", "").lower()
-                               for e in STATE.events.get(rec["pane"], [])
-                               if e.get("kind") == "subagent_start"):
-        return "Review"
-    if "Code" in done:
-        return "In progress"
-    return "Idle"
+def _compat_cards(tickets: list[dict]) -> list[dict]:
+    """Flatten tickets back to the old card shape for older clients/tests."""
+    out = []
+    for t in tickets:
+        for a in t["agents"]:
+            out.append({
+                "pane": a["pane"], "name": a["name"], "kind": a["kind"],
+                "cwd": a.get("cwd", ""), "repo": t.get("repo"),
+                "branch": t.get("branch", ""), "ticket": t["name"],
+                "stations": [], "current_station": None, "status": {},
+                "agent_status": a["agent_status"], "needs_user": a["needs_user"],
+                "ask": None, "last_line": a["last_line"],
+                "column": t["stage"], "time_in_column": 0, "unpushed": None,
+                "context_pct": a.get("context_pct"),
+            })
+    return out
+
+
+def _worktree_index() -> dict[str, dict]:
+    """Map realpath -> worktree record, for linking an agent's cwd to its
+    worktree. Uses native herdr worktree listing when available."""
+    idx: dict[str, dict] = {}
+    for wt in list_worktrees(include_occupied=True):
+        idx[os.path.realpath(wt["path"])] = wt
+    return idx
 
 
 def _last_line(rec: dict, events: list[dict]) -> str:
@@ -2014,7 +2248,15 @@ def _build_chat(events: list[dict]) -> list[dict]:
 # worktrees (parked)
 # --------------------------------------------------------------------------
 
-def list_worktrees() -> list[dict]:
+def list_worktrees(include_occupied: bool = False) -> list[dict]:
+    """Worktrees across agent repos and configured roots.
+
+    Measured 0.9.2: `herdr worktree list [--cwd <repo>]` returns worktrees with
+    branch, path, open_workspace_id and is_prunable. We use it first, because it
+    maps a worktree to the workspace (and so the agent) that has it open; a raw
+    `git worktree list` cannot. `include_occupied` returns every worktree,
+    including ones an agent is inside (used to link an agent to its worktree).
+    """
     roots = set()
     with STATE.lock:
         for rec in STATE.agents.values():
@@ -2025,28 +2267,138 @@ def list_worktrees() -> list[dict]:
         rr = repo_root(os.path.expanduser(r))
         if rr:
             roots.add(rr)
-    out = []
+    # A worktree created from the UI has no agent inside yet, so its parent repo
+    # is otherwise never scanned. Recover it from the worktree path
+    # (~/.herdr/worktrees/<repo>/<branch>) and from any pane cwd in the snapshot.
+    roots.update(_repos_from_herdr())
+
+    out: list[dict] = []
+    seen: set[str] = set()
     for repo in roots:
-        for wt in git_worktrees(repo):
-            path = wt.get("path", "")
-            if not path or path == repo:
+        trees = _herdr_worktrees(repo)
+        if trees is None:
+            trees = _git_worktrees(repo)
+        for wt in trees:
+            path = os.path.realpath(wt.get("path", ""))
+            if not path or path in seen or not os.path.isdir(path):
                 continue
-            if not os.path.isdir(path):
+            if path == os.path.realpath(repo):
                 continue
+            seen.add(path)
             with STATE.lock:
-                occupied = any(rec.get("cwd", "").startswith(path)
-                               for rec in STATE.agents.values())
-            if occupied:
+                occupied = any(os.path.realpath(rec.get("cwd") or "")
+                               == path for rec in STATE.agents.values())
+            if occupied and not include_occupied:
                 continue
             rc, dirty = git(path, "status", "--porcelain")
             uncommitted = len([x for x in dirty.splitlines() if x.strip()])
             rc, count = git(path, "rev-list", "--count", "HEAD", "--not",
                             "--remotes", "--not", "main", "--not", "master")
-            out.append({"repo": repo, "path": path,
-                        "branch": wt.get("branch", ""),
-                        "uncommitted": uncommitted,
-                        "unmerged": int(count.strip() or 0) if rc == 0 else 0})
+            branch = wt.get("branch", "")
+            out.append({
+                "repo": repo, "path": path, "branch": branch,
+                "ticket": _branch_ticket(branch) if branch else "Unnamed work",
+                "uncommitted": uncommitted,
+                "unmerged": int(count.strip() or 0) if rc == 0 else 0,
+                "open_workspace_id": wt.get("open_workspace_id", ""),
+                "occupied": occupied,
+                "prunable": bool(wt.get("is_prunable")),
+            })
     return out
+
+
+def _repos_from_herdr() -> set[str]:
+    """Main repos herdr knows about, so parked worktrees are always visible.
+
+    Sources: the worktree base (~/.herdr/worktrees/<repo>/<branch>) and every
+    pane cwd in the snapshot (a worktree-backed workspace's root pane cwd is its
+    checkout). Both are best-effort; failures just mean fewer roots.
+    """
+    roots: set[str] = set()
+    base = os.path.expanduser("~/.herdr/worktrees")
+    if os.path.isdir(base):
+        for repo_dir in os.listdir(base):
+            p = os.path.join(base, repo_dir)
+            rr = repo_root(p) if os.path.isdir(p) else None
+            if rr:
+                roots.add(rr)
+            else:
+                # the base may hold the bare repo itself
+                if os.path.isdir(os.path.join(p, ".git")) or \
+                        os.path.isfile(os.path.join(p, ".git")):
+                    roots.add(p)
+    try:
+        snap = snapshot()
+    except HerdrError:
+        snap = {}
+    pane_cwds = {p.get("cwd", "") for p in snap.get("panes", [])}
+    for cwd in pane_cwds:
+        rr = repo_root(cwd) if cwd else None
+        if rr:
+            roots.add(rr)
+    return roots
+
+
+def _herdr_worktrees(repo: str) -> list[dict] | None:
+    """Native herdr worktree list, or None if unsupported/failed."""
+    try:
+        j = herdr("worktree", "list", "--cwd", repo, timeout=15)
+    except HerdrError:
+        return None
+    r = j.get("result", j)
+    if not isinstance(r, dict):
+        return None
+    wts = r.get("worktrees")
+    if not isinstance(wts, list):
+        return None
+    out = []
+    for w in wts:
+        if not isinstance(w, dict):
+            continue
+        out.append({
+            "path": w.get("path", ""),
+            "branch": _clean_branch(w.get("branch", "")),
+            "open_workspace_id": w.get("open_workspace_id", ""),
+            "is_prunable": w.get("is_prunable", False),
+            "is_linked_worktree": w.get("is_linked_worktree", False),
+        })
+    return out
+
+
+def _git_worktrees(repo: str) -> list[dict]:
+    rc, out = git(repo, "worktree", "list", "--porcelain")
+    if rc != 0:
+        return []
+    trees, cur = [], {}
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            if cur:
+                trees.append(cur)
+            cur = {"path": line[9:]}
+        elif line.startswith("branch "):
+            cur["branch"] = _clean_branch(line[7:])
+        elif line.strip() == "detached":
+            cur["detached"] = True
+    if cur:
+        trees.append(cur)
+    return trees
+
+
+def _clean_branch(b: str) -> str:
+    return (b or "").replace("refs/heads/", "").strip()
+
+
+# Measured 0.9.2 / harness CLIs: the "yolo" bypass flag per harness.
+YOLO_ARGS = {
+    "claude": ["--dangerously-skip-permissions"],
+    "codex": ["--dangerously-bypass-approvals-and-sandbox"],
+    "opencode": ["--auto"],
+}
+
+
+def yolo_args(kind: str) -> list[str]:
+    return YOLO_ARGS.get(kind, [])
+
 
 
 # --------------------------------------------------------------------------
@@ -2054,21 +2406,40 @@ def list_worktrees() -> list[dict]:
 # --------------------------------------------------------------------------
 
 def _hire_impl(kind: str, folder: str, name: str, message: str,
-               workspace: str, workspace_label: str = "") -> None:
-    """Hire as a tab in a workspace (measured 0.9.2).
+               workspace: str, workspace_label: str = "",
+               use_worktree: bool = False, worktree_branch: str = "",
+               worktree_base: str = "", yolo: bool = False) -> None:
+    """Hire an agent, optionally in its own git worktree.
 
     A herdr workspace holds one or more tabs; each tab is one shell pane and so
     one agent. Hiring either adds a tab to an existing workspace or creates a
-    new workspace named by the user. This lets several agents share one
-    workspace, which is the point of the workspace concept.
+    new workspace named by the user.
+
+    When `use_worktree` is set, the agent's pane is opened inside a fresh git
+    worktree (branch `worktree_branch`), and the worktree's path and workspace
+    are recorded on the agent so they can be cleared when it is fired.
     """
-    pane = _new_shell_pane(workspace, workspace_label, folder, name)
+    wt = None
+    if use_worktree:
+        wt = create_agent_worktree(folder, worktree_branch, worktree_base,
+                                   workspace_label or name)
+        cwd = wt["path"]
+        pane = wt["pane"]
+        workspace = wt.get("workspace_id") or workspace
+    else:
+        cwd = folder
+        pane = _new_shell_pane(workspace, workspace_label, folder, name)
+
+    start_args = yolo_args(kind) if yolo else []
     # agent start fails with agent_pane_busy just after tab/pane creation.
     last_err = None
     for _ in range(20):
         try:
-            herdr("agent", "start", name, "--kind", kind, "--pane", pane,
-                  "--timeout", "60000", timeout=75)
+            cmd = ["agent", "start", name, "--kind", kind, "--pane", pane,
+                   "--timeout", "60000"]
+            if start_args:
+                cmd += ["--", *start_args]
+            herdr(*cmd, timeout=75)
             last_err = None
             break
         except HerdrError as e:
@@ -2086,7 +2457,12 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
         rec["hired_name"] = name
         rec["name"] = rec.get("name") or name
         rec["kind"] = kind
-        rec["cwd"] = folder
+        rec["cwd"] = cwd
+        rec["yolo"] = bool(yolo)
+        if wt:
+            rec["worktree_path"] = wt["path"]
+            rec["worktree_branch"] = wt["branch"]
+            rec["worktree_workspace"] = wt.get("workspace_id", "")
         rec.setdefault("col_since", time.time())
     if message.strip():
         # send once the agent is ready
@@ -2099,6 +2475,100 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
                     time.sleep(1.5)
                     continue
                 break
+
+
+def _default_wt_branch(name: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (name or "agent").lower()).strip("-")
+    return f"agent/{slug or 'agent'}"
+
+
+def create_agent_worktree(repo: str, branch: str, base: str,
+                          label: str) -> dict:
+    """Create a worktree via native herdr and return its pane, path, workspace.
+
+    Measured 0.9.2: `herdr worktree create --cwd <repo> --branch <name>
+    [--base <ref>] --label <text> --no-focus` returns result.root_pane with the
+    new pane id, whose cwd is the worktree path. Ownership is recorded so the
+    worktree can be removed when the agent is fired.
+    """
+    if not repo_root(repo):
+        raise HerdrError("bad_repo", "not a git repository")
+    branch = branch or _default_wt_branch(label)
+    if not re.match(r"^[A-Za-z0-9._/-]+$", branch):
+        raise HerdrError("bad_branch", "invalid branch name")
+    args = ["worktree", "create", "--cwd", repo, "--branch", branch,
+            "--no-focus"]
+    if base:
+        args += ["--base", base]
+    if label:
+        args += ["--label", label]
+    j = herdr(*args, timeout=90)
+    r = j.get("result", j)
+    root = r.get("root_pane", {}) if isinstance(r, dict) else {}
+    pane = root.get("pane_id", "")
+    if not valid_pane(pane):
+        raise HerdrError("worktree_failed", "no pane returned")
+    return {
+        "pane": pane,
+        "path": root.get("cwd", "") or root.get("foreground_cwd", ""),
+        "branch": branch,
+        "workspace_id": root.get("workspace_id", ""),
+    }
+
+
+def remove_agent_worktree(rec: dict) -> str:
+    """Remove the worktree an agent owns, refusing while it is dirty.
+
+    Measured 0.9.2: `herdr worktree remove --workspace <ID>` removes a linked
+    worktree checkout by its workspace. Never uses --force. Returns "" on
+    success, or a reason string when it was skipped.
+    """
+    path = rec.get("worktree_path") or ""
+    ws = rec.get("worktree_workspace") or ""
+    if not path:
+        return "no worktree"
+    if not os.path.isdir(path):
+        return "already gone"
+    rc, dirty = git(path, "status", "--porcelain")
+    if rc == 0 and dirty.strip():
+        return "uncommitted changes"
+    # A worktree with commits that are not on any remote is not safe to delete
+    # silently — but only when the repo actually has a remote. With no remote,
+    # every commit is "unpushed" and that would block every removal.
+    rc, remotes = git(path, "remote")
+    if rc == 0 and remotes.strip():
+        rc, count = git(path, "rev-list", "--count", "HEAD", "--not",
+                        "--remotes")
+        if rc == 0 and int(count.strip() or 0) > 0:
+            return "unpushed commits"
+    try:
+        if ws:
+            try:
+                herdr("worktree", "remove", "--workspace", ws, timeout=30)
+                return ""
+            except HerdrError as e:
+                # Measured: closing an agent's sole tab already removes its
+                # workspace, so by fire time it may be gone. Fall back to
+                # removing the worktree directly by path.
+                if e.code != "workspace_not_found":
+                    raise
+        _remove_worktree_by_path(path)
+    except HerdrError as e:
+        return e.code or "remove failed"
+    return ""
+
+
+def _remove_worktree_by_path(path: str) -> None:
+    """Remove a worktree checkout by path, via its main repository."""
+    # Find the main repo so `git worktree remove` runs from a stable checkout.
+    rc, common = git(path, "rev-parse", "--path-format=absolute",
+                     "--git-common-dir")
+    main_repo = os.path.dirname(common.strip()) if rc == 0 and common.strip() \
+        else path
+    p = subprocess.run(["git", "-C", main_repo, "worktree", "remove", path],
+                       capture_output=True, text=True, timeout=30)
+    if p.returncode != 0:
+        raise HerdrError("remove_failed", p.stderr.strip()[:200])
 
 
 def _new_shell_pane(workspace: str, workspace_label: str, folder: str,
@@ -2494,6 +2964,44 @@ def _selfcheck() -> None:
     assert fl["path"] == os.path.realpath(os.path.expanduser("~"))
     assert all(not d["name"].startswith(".") for d in fl["dirs"])
     assert list_folders("/etc")["path"] == fl["home"], "outside $HOME is clamped"
+
+    # ticket inference: first source wins, and each is a concrete observed value
+    rec = {"tab_label": "opencode-coding"}
+    ev_prompt = [{"kind": "prompt", "text": "/clear"},
+                 {"kind": "prompt", "text": "wire up the checkout endpoint"}]
+    t = derive_ticket(rec, ev_prompt, "/home/x/board-scratch", "feature/ABC-123-api",
+                      worktree_branch="feature/ABC-123-wt")
+    assert t["name"] == "ABC-123" and t["source"] == "worktree branch", t
+    t = derive_ticket(rec, ev_prompt, "/home/x/board-scratch", "feature/ABC-123-api")
+    assert t["name"] == "ABC-123" and t["source"] == "branch ticket", t
+    t = derive_ticket(rec, ev_prompt, "/home/x/board-scratch", "spike/login")
+    assert t["name"] == "spike/login" and t["source"] == "branch", t
+    t = derive_ticket(rec, ev_prompt, "/home/x/board-scratch", "master")
+    assert t["name"] == "opencode-coding" and t["source"] == "tab label", t
+    t = derive_ticket({"tab_label": "1"}, ev_prompt, "/home/x/board-scratch", "master")
+    assert t["name"].startswith("wire up") and t["source"] == "first prompt", t
+    t = derive_ticket({"tab_label": "1"}, [], "/home/x/board-scratch", "master")
+    assert t["source"] == "repo" and "board-scratch" in t["name"], t
+    t = derive_ticket({"tab_label": "1"}, [], None, "")
+    assert t["name"] == "Unnamed work", t
+    # branch change to a differently suffixed branch keeps the same ticket id
+    assert _branch_ticket("feature/ABC-123-fix") == "ABC-123"
+
+    # stages: ticket takes the furthest stage of its agents
+    a1 = {"pane": "w1:p1", "stage": "In progress"}
+    a2 = {"pane": "w1:p2", "stage": "Review"}
+    assert ticket_stage([a1, a2]) == "Review"
+    assert ticket_stage([]) == "To do"
+    assert STAGE_ORDER.index("Shipped") > STAGE_ORDER.index("To do")
+
+    # measured yolo flags per harness
+    assert yolo_args("claude") == ["--dangerously-skip-permissions"]
+    assert yolo_args("codex") == ["--dangerously-bypass-approvals-and-sandbox"]
+    assert yolo_args("opencode") == ["--auto"]
+    assert yolo_args("unknown") == []
+    # worktree branch defaults are safe slugs
+    assert _default_wt_branch("My Agent!") == "agent/my-agent"
+    assert _default_wt_branch("") == "agent/agent"
 
     print("selfcheck: OK")
 

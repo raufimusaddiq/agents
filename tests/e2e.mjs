@@ -57,7 +57,7 @@ async function apiLogin() {
 
 async function answerAsk(page, name) {
   // Target ONLY the fixture's card by its unique aria-label.
-  const card = page.locator(`[aria-label="card ${name}"]`);
+  const card = page.locator(`[aria-label="agent ${name}"]`);
   if (!(await card.count())) return false;
   await card.click();
   const panel = page.locator(`[aria-label^="agent panel ${name}"]`);
@@ -86,7 +86,7 @@ async function answerAsk(page, name) {
   await page.getByLabel("hire name").fill(UNIQUE);
   await page.getByTestId("hire-submit").click();
   // wait for the card to appear; reload periodically in case SSE lagged
-  const card = page.locator(`[aria-label="card ${UNIQUE}"]`);
+  const card = page.locator(`[aria-label="agent ${UNIQUE}"]`);
   let hired = false;
   for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(4000);
@@ -98,7 +98,7 @@ async function answerAsk(page, name) {
     await page.reload({ waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1500);
   }
-  check("hire: card appears", hired, hired ? "" : "(timeout)");
+  check("hire: agent chip appears", hired, hired ? "" : "(timeout)");
 
   // ---- answer any startup prompt (folder trust / hooks etc.) ----
   if (hired) {

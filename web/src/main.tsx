@@ -40,13 +40,13 @@ function App() {
       setBoard(b);
       setAuthed(true);
       // Needs-you detection: chime + browser notification + tab title count.
-      const needs = b.cards.filter((c) => c.needs_user);
-      const ids = new Set(needs.map((c) => c.pane));
-      for (const c of needs) {
-        if (!needsRef.current.has(c.pane)) {
+      const needs = b.agents.filter((a) => a.needs_user);
+      const ids = new Set<string>(needs.map((a) => a.pane));
+      for (const a of needs) {
+        if (!needsRef.current.has(a.pane)) {
           chime();
           if ("Notification" in window && Notification.permission === "granted") {
-            new Notification(`Needs you: ${c.name}`, { body: c.last_line });
+            new Notification(`Needs you: ${a.name}`, { body: a.last_line });
           }
         }
       }

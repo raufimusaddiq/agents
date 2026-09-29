@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ScrollArea, Tabs } from "@mantine/core";
+import { Modal, ScrollArea, Tabs } from "@mantine/core";
 import type { Agent, ChatRow } from "../types";
 import { api } from "../api";
 import { AnswerCard } from "./AnswerCard";
@@ -248,6 +248,8 @@ export function AgentPanel({
 }) {
   const [agent, setAgent] = useState<Agent | null>(null);
   const [termOpen, setTermOpen] = useState(false);
+  const [fireOpen, setFireOpen] = useState(false);
+  const [fireMsg, setFireMsg] = useState("");
   const timer = useRef<number | null>(null);
 
   async function load() {
@@ -294,6 +296,13 @@ export function AgentPanel({
           </button>
           <button
             type="button"
+            className="ab-btn board-mini is-danger"
+            onClick={() => setFireOpen(true)}
+          >
+            Fire agent
+          </button>
+          <button
+            type="button"
             className="ab-btn board-mini"
             aria-label="close agent panel"
             onClick={onClose}
@@ -302,6 +311,49 @@ export function AgentPanel({
           </button>
         </div>
       </header>
+
+      <Modal
+        opened={fireOpen}
+        onClose={() => setFireOpen(false)}
+        title="Fire agent"
+        centered
+      >
+        <p>
+          Close {agent.name}&apos;s pane? This stops the {agent.kind} process. The
+          agent stays rehirable for 24 hours.
+        </p>
+        <p className="panel-note">
+          If this agent owns a worktree, it is removed too — unless it has
+          uncommitted or unpushed work, which is never discarded.
+        </p>
+        {fireMsg && <p className="hire-error">{fireMsg}</p>}
+        <div className="alert-actions">
+          <button
+            type="button"
+            className="ab-btn board-mini"
+            onClick={() => setFireOpen(false)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="ab-btn board-mini is-danger"
+            onClick={() => {
+              api.fire(agent.pane).then((r) => {
+                setFireOpen(false);
+                if (r && r.worktree_skip) {
+                  setFireMsg(`Worktree kept: ${r.worktree_skip}`);
+                  load();
+                } else {
+                  onClose();
+                }
+              });
+            }}
+          >
+            Fire
+          </button>
+        </div>
+      </Modal>
 
       <TerminalModal
         pane={agent.pane}

@@ -6,10 +6,89 @@ import {
   Stack,
   TextInput,
 } from "@mantine/core";
-import type { Board, Card as CardT, FolderListing, Worktree } from "../types";
+import type { Board, FolderListing, Worktree } from "../types";
 import { api } from "../api";
-import { CardView } from "./CardView";
+import { TicketCard } from "./TicketCard";
+import { Crew } from "./Crew";
 import { useFlip } from "../flip";
+
+function WorktreeModal({
+  opened,
+  onClose,
+  repos,
+}: {
+  opened: boolean;
+  onClose: () => void;
+  repos: string[];
+}) {
+  const [repo, setRepo] = useState(repos[0] || "");
+  const [branch, setBranch] = useState("");
+  const [base, setBase] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (opened && !repo && repos[0]) setRepo(repos[0]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened, repos]);
+
+  async function submit() {
+    setBusy(true);
+    setError("");
+    try {
+      await api.createWorktree({ repo, branch, base });
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      opened={opened}
+      onClose={onClose}
+      title={<span className="font-display hire-title">New worktree</span>}
+      centered
+    >
+      <Stack gap="sm">
+        <Select
+          label="Repository"
+          data={repos.map((r) => ({ value: r, label: r.split("/").pop() || r }))}
+          value={repo}
+          onChange={(v) => setRepo(v || "")}
+          allowDeselect={false}
+          aria-label="worktree repo"
+        />
+        <TextInput
+          label="Branch"
+          description="A new branch name. Use the ticket id, e.g. ABC-123-login."
+          value={branch}
+          onChange={(e) => setBranch(e.currentTarget.value)}
+          aria-label="worktree branch"
+        />
+        <TextInput
+          label="Base (optional)"
+          placeholder="main"
+          value={base}
+          onChange={(e) => setBase(e.currentTarget.value)}
+          aria-label="worktree base"
+        />
+        {error && <p className="hire-error">{error}</p>}
+        <button
+          type="button"
+          className="ab-btn hire-submit"
+          onClick={submit}
+          disabled={busy || !repo || !branch}
+          data-testid="worktree-create"
+        >
+          {busy ? "Creating…" : "Create worktree"}
+        </button>
+      </Stack>
+    </Modal>
+  );
+}
 
 function FolderPicker({
   value,
@@ -131,6 +210,9 @@ function HireModal({
   const [folder, setFolder] = useState("~");
   const [name, setName] = useState("");
   const [message, setMessage] = useState("");
+  const [useWorktree, setUseWorktree] = useState(false);
+  const [worktreeBranch, setWorktreeBranch] = useState("");
+  const [yolo, setYolo] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -153,6 +235,9 @@ function HireModal({
         folder,
         name,
         message,
+        use_worktree: useWorktree,
+        worktree_branch: worktreeBranch,
+        yolo,
       });
       onDone();
       onClose();
@@ -227,6 +312,48 @@ function HireModal({
           value={message}
           onChange={(e) => setMessage(e.currentTarget.value)}
         />
+        <div className="hire-opts">
+          <label className="hire-opt">
+            <input
+              type="checkbox"
+              checked={useWorktree}
+              onChange={(e) => setUseWorktree(e.currentTarget.checked)}
+              aria-label="use worktree"
+            />
+            <span>
+              Own worktree
+              <span className="hire-opt-note">
+                {" "}
+                isolated checkout on a new branch. Skip it when the repo has
+                just this one agent.
+              </span>
+            </span>
+          </label>
+          {useWorktree && (
+            <TextInput
+              label="Worktree branch (optional)"
+              placeholder="defaults to agent/<name>"
+              value={worktreeBranch}
+              onChange={(e) => setWorktreeBranch(e.currentTarget.value)}
+              aria-label="worktree branch"
+            />
+          )}
+          <label className="hire-opt">
+            <input
+              type="checkbox"
+              checked={yolo}
+              onChange={(e) => setYolo(e.currentTarget.checked)}
+              aria-label="yolo mode"
+            />
+            <span>
+              YOLO mode
+              <span className="hire-opt-note">
+                {" "}
+                skip permission prompts. The agent can run anything.
+              </span>
+            </span>
+          </label>
+        </div>
         {error && <p className="hire-error">{error}</p>}
         <button
           type="button"
@@ -245,9 +372,11 @@ function HireModal({
 function WorktreeCards({
   worktrees,
   onRehire,
+  onOpen,
 }: {
   worktrees: Worktree[];
   onRehire: (w: Worktree) => void;
+  onOpen: (w: Worktree) => void;
 }) {
   const [err, setErr] = useState("");
   return (
@@ -259,8 +388,8 @@ function WorktreeCards({
           data-flip-id={`wt:${w.path}`}
           aria-label={`worktree ${w.path}`}
         >
-          <p className="park-branch font-display">{w.branch || "detached"}</p>
-          <p className="park-path mono">{w.path}</p>
+          <p className="park-branch font-display">{w.ticket || "Unnamed work"}</p>
+          <p className="park-path mono">{w.branch || "detached"}</p>
           <p className="park-stats">
             <span className={w.uncommitted ? "park-chip is-warn" : "park-chip"}>
               {w.uncommitted} uncommitted
@@ -274,6 +403,13 @@ function WorktreeCards({
               onClick={() => onRehire(w)}
             >
               Rehire here
+            </button>
+            <button
+              type="button"
+              className="ab-btn board-mini"
+              onClick={() => onOpen(w)}
+            >
+              Open
             </button>
             <button
               type="button"
@@ -302,7 +438,6 @@ export function BoardView({
   board,
   theme,
   onToggleTheme,
-  selected,
   onSelect,
 }: {
   board: Board;
@@ -311,19 +446,31 @@ export function BoardView({
   selected: string | null;
   onSelect: (pane: string | null) => void;
 }) {
-  const [ticket, setTicket] = useState<string | null>(null);
+  const [repo, setRepo] = useState<string | null>(null);
   const [kind, setKind] = useState<string | null>(null);
   const [onlyNeeds, setOnlyNeeds] = useState(false);
+  const [crewOpen, setCrewOpen] = useState(
+    typeof window !== "undefined" ? window.innerWidth >= 900 : true,
+  );
   const [hireOpen, setHireOpen] = useState(false);
-  const [hirePreset, setHirePreset] = useState<{ folder: string; name: string } | null>(null);
-  const ref = useFlip(JSON.stringify(board.cards.map((c) => [c.pane, c.column])));
+  const [wtOpen, setWtOpen] = useState(false);
+  const [hirePreset, setHirePreset] =
+    useState<{ folder: string; name: string } | null>(null);
+  const ref = useFlip(
+    JSON.stringify(board.tickets.map((t) => [t.id, t.stage])),
+  );
 
-  const ticketNames = Array.from(new Set(board.cards.map((c) => c.ticket))).sort();
-  let cards = board.cards;
-  if (ticket) cards = cards.filter((c) => c.ticket === ticket);
-  if (kind) cards = cards.filter((c) => c.kind === kind);
-  if (onlyNeeds) cards = cards.filter((c) => c.needs_user);
-  const needsCount = board.cards.filter((c) => c.needs_user).length;
+  const repos = Array.from(
+    new Set(board.tickets.map((t) => t.repo).filter(Boolean) as string[]),
+  ).sort();
+  const repoName = (r: string) => r.split("/").pop() || r;
+
+  let tickets = board.tickets;
+  if (repo) tickets = tickets.filter((t) => t.repo === repo);
+  if (kind)
+    tickets = tickets.filter((t) => t.agents.some((a) => a.kind === kind));
+  if (onlyNeeds) tickets = tickets.filter((t) => t.needs_you_count > 0);
+  const needsCount = board.tickets.reduce((n, t) => n + t.needs_you_count, 0);
 
   return (
     <div className="board-shell">
@@ -350,11 +497,11 @@ export function BoardView({
         <div className="board-controls">
           <Select
             size="xs"
-            placeholder="ticket"
+            placeholder="repo"
             clearable
-            data={ticketNames}
-            value={ticket}
-            onChange={setTicket}
+            data={repos.map((r) => ({ value: r, label: repoName(r) }))}
+            value={repo}
+            onChange={setRepo}
             w={130}
             comboboxProps={{ withinPortal: true }}
           />
@@ -377,6 +524,16 @@ export function BoardView({
           >
             Only needs you
           </button>
+          <button
+            type="button"
+            className="ab-btn board-ctl"
+            aria-pressed={crewOpen}
+            data-active={crewOpen}
+            data-testid="crew-toggle"
+            onClick={() => setCrewOpen((v) => !v)}
+          >
+            Crew
+          </button>
           {board.remote_on && (
             <span className="board-remote" data-testid="remote-badge">
               remote on
@@ -390,6 +547,14 @@ export function BoardView({
             onClick={onToggleTheme}
           >
             {theme === "dark" ? "Day shift" : "Night shift"}
+          </button>
+          <button
+            type="button"
+            className="ab-btn board-ctl"
+            data-testid="worktree-open"
+            onClick={() => setWtOpen(true)}
+          >
+            New worktree
           </button>
           <button
             type="button"
@@ -441,55 +606,71 @@ export function BoardView({
         </section>
       )}
 
-      <div ref={ref} className="board-columns">
-        {board.columns.map((col) => {
-          const colCards = cards.filter((c) => c.column === col);
-          const count = col === "Parked" ? board.worktrees.length : colCards.length;
-          return (
-            <section
-              key={col}
-              className="board-col"
-              data-col={col.toLowerCase().replace(" ", "-")}
-              aria-label={`column ${col}`}
-            >
-              <header className="board-col-head">
-                <h2 className="font-display board-col-title">{col}</h2>
-                <span className="board-col-count" aria-hidden>
-                  {count}
-                </span>
-              </header>
-              <ScrollArea h="calc(100vh - 280px)" type="hover">
-                <Stack gap="xs" pt={6}>
-                  {col === "Parked" ? (
-                    <WorktreeCards
-                      worktrees={board.worktrees}
-                      onRehire={(w) => {
-                        setHirePreset({
-                          folder: w.path,
-                          name:
-                            w.branch
-                              .replace(/^refs\/heads\//, "")
-                              .split("/")
-                              .pop() || "agent",
-                        });
-                        setHireOpen(true);
-                      }}
-                    />
-                  ) : (
-                    colCards.map((c: CardT) => (
-                      <CardView
-                        key={c.pane}
-                        card={c}
-                        selected={selected === c.pane}
-                        onOpen={() => onSelect(c.pane)}
+      <div className="board-body">
+        <div ref={ref} className="board-columns">
+          {board.columns.map((col) => {
+            const colTickets =
+              col === "Parked"
+                ? []
+                : tickets.filter((t) => t.stage === col);
+            const count =
+              col === "Parked" ? board.worktrees.length : colTickets.length;
+            return (
+              <section
+                key={col}
+                className="board-col"
+                data-col={col.toLowerCase().replace(/ /g, "-")}
+                aria-label={`column ${col}`}
+              >
+                <header className="board-col-head">
+                  <h2 className="font-display board-col-title">{col}</h2>
+                  <span className="board-col-count" aria-hidden>
+                    {count}
+                  </span>
+                </header>
+                <ScrollArea h="calc(100vh - 280px)" type="hover">
+                  <Stack gap="xs" pt={6}>
+                    {col === "Parked" ? (
+                      <WorktreeCards
+                        worktrees={board.worktrees}
+                        onRehire={(w) => {
+                          setHirePreset({
+                            folder: w.path,
+                            name:
+                              (w.ticket || "agent")
+                                .replace(/[^a-z0-9_-]/gi, "-")
+                                .toLowerCase()
+                                .slice(0, 32) || "agent",
+                          });
+                          setHireOpen(true);
+                        }}
+                        onOpen={(w) =>
+                          api.openWorktree(w.path).catch(() => undefined)
+                        }
                       />
-                    ))
-                  )}
-                </Stack>
-              </ScrollArea>
-            </section>
-          );
-        })}
+                    ) : (
+                      colTickets.map((t) => (
+                        <TicketCard
+                          key={t.id}
+                          ticket={t}
+                          onOpenAgent={onSelect}
+                        />
+                      ))
+                    )}
+                  </Stack>
+                </ScrollArea>
+              </section>
+            );
+          })}
+        </div>
+
+        {crewOpen && (
+          <Crew
+            agents={board.agents}
+            onOpenAgent={onSelect}
+            onClose={() => setCrewOpen(false)}
+          />
+        )}
       </div>
 
       {board.closed.length > 0 && (
@@ -518,6 +699,12 @@ export function BoardView({
         onDone={() => undefined}
         preset={hirePreset}
       />
+      <WorktreeModal
+        opened={wtOpen}
+        onClose={() => setWtOpen(false)}
+        repos={repos}
+      />
     </div>
   );
 }
+

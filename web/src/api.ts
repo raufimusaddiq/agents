@@ -76,7 +76,7 @@ export const api = {
         agents: string[];
       }[];
     }>("/api/workspaces"),
-  hire: (body: Record<string, string>) =>
+  hire: (body: Record<string, unknown>) =>
     req<{ ok: boolean }>("/api/hire", {
       method: "POST",
       body: JSON.stringify(body),
@@ -86,6 +86,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ key }),
     }),
+  fire: (pane: string) =>
+    req<{ ok: boolean; worktree_removed: boolean; worktree_skip: string }>(
+      "/api/fire",
+      {
+        method: "POST",
+        body: JSON.stringify({ pane }),
+      },
+    ),
   dismiss: (key: string) =>
     req<{ ok: boolean }>("/api/dismiss", {
       method: "POST",
@@ -103,6 +111,16 @@ export const api = {
     }),
   removeWorktree: (path: string) =>
     req<{ ok: boolean }>("/api/worktree_remove", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  createWorktree: (body: { repo: string; branch: string; base?: string; label?: string }) =>
+    req<{ ok: boolean }>("/api/worktree_create", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  openWorktree: (path: string) =>
+    req<{ ok: boolean }>("/api/worktree_open", {
       method: "POST",
       body: JSON.stringify({ path }),
     }),

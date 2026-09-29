@@ -54,13 +54,18 @@ export type Worktree = {
   repo: string;
   path: string;
   branch: string;
+  ticket: string;
   uncommitted: number;
   unmerged: number;
+  open_workspace_id: string;
+  occupied: boolean;
+  prunable: boolean;
 };
 
 export type Board = {
-  cards: Card[];
-  tickets: Record<string, Card[]>;
+  tickets: Ticket[];
+  agents: AgentChipData[];
+  stages: string[];
   alerts: Alert[];
   closed: Card[];
   frozen_roster: unknown[] | null;
@@ -149,4 +154,31 @@ export type FolderListing = {
   parent: string | null;
   can_descend: boolean;
   dirs: FolderEntry[];
+};
+
+export type AgentChipData = {
+  pane: string;
+  name: string;
+  kind: string;
+  agent_status: string;
+  needs_user: boolean;
+  stage: string;
+  last_line: string;
+  context_pct: number | null;
+  tab_label: string;
+  ws_label: string;
+};
+
+export type Ticket = {
+  id: string;
+  name: string;
+  source: string;
+  agents: AgentChipData[];
+  repo: string | null;
+  branch: string;
+  worktree: string;
+  stage: string;
+  unpushed: number | null;
+  needs_you_count: number;
+  context_pct_max: number | null;
 };

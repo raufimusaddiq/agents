@@ -62,6 +62,7 @@
   --ab-focus: #1f6feb;
   --ab-rivet: #c9b892;
   --ab-dim: #5b5344;
+  --ab-warn-text: #8a5a00;
   --ab-radius: 0px;
 }
 
@@ -92,6 +93,7 @@
   --ab-focus: #ffd166;
   --ab-rivet: #4a4b55;
   --ab-dim: #b8ac92;
+  --ab-warn-text: #f4c76a;
   --mantine-color-dimmed: #b8ac92;
 }
 
@@ -634,8 +636,314 @@ body {
 .hire-error {
   margin: 0;
   font-size: 12px;
-  color: var(--signal-red);
+  color: var(--signal-red-deep);
   font-weight: 600;
+}
+
+.hire-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 2px solid var(--ab-border);
+  background: var(--ab-panel);
+}
+
+.hire-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.hire-opt input {
+  margin-top: 3px;
+  accent-color: var(--ab-col-ready);
+}
+
+.hire-opt-note {
+  font-weight: 400;
+  color: var(--ab-dim);
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------- tickets */
+
+.board-body {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+.board-body .board-columns {
+  flex: 1;
+  min-width: 0;
+}
+
+.ticket-card {
+  padding: 9px 11px 10px;
+}
+
+.ticket-card[data-needs="true"] {
+  box-shadow: 4px 4px 0 var(--signal-red);
+}
+
+.ticket-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ticket-name {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-alarm {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  background: var(--signal-red-deep);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.ticket-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ab-dim);
+}
+
+.ticket-source {
+  border-bottom: 1px dotted var(--ab-riv);
+}
+
+.ticket-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-wt {
+  margin: 3px 0 0;
+  font-size: 11px;
+  color: var(--ab-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ticket-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 7px;
+}
+
+.ticket-unpushed {
+  margin: 6px 0 0;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ab-warn-text);
+}
+
+.ticket-ctx {
+  margin: 3px 0 0;
+  font-size: 10px;
+  color: var(--ab-dim);
+}
+
+.agent-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 3px 6px;
+  border: 1.5px solid var(--ab-border);
+  background: var(--ab-panel);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.agent-chip:hover,
+.agent-chip:focus-visible {
+  background: var(--ab-answer);
+}
+
+.chip-name {
+  font-size: 12px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-kind {
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.chip-ctx {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--ab-dim);
+  flex-shrink: 0;
+}
+
+/* Status lamp: agent runtime state, never a column. */
+.lamp {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ab-border);
+  flex-shrink: 0;
+}
+
+.lamp.is-working {
+  background: var(--ab-col-go);
+  animation: lamp-pulse 1.4s ease-in-out infinite;
+}
+
+.lamp.is-needs {
+  background: var(--signal-red);
+}
+
+.lamp.is-idle {
+  background: var(--screen-green);
+}
+
+.lamp.is-unknown {
+  background: var(--ab-col-idle);
+}
+
+@keyframes lamp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lamp.is-working {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------------------- crew */
+
+.crew {
+  flex: 0 0 260px;
+  min-width: 0;
+  padding: 10px 12px 14px;
+  overflow-y: auto;
+  max-height: calc(100vh - 150px);
+}
+
+.crew-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--ab-border);
+}
+
+.crew-title {
+  font-size: 15px;
+}
+
+.crew-count {
+  font-family: "Bungee", sans-serif;
+  font-size: 12px;
+  padding: 1px 6px;
+  background: var(--ab-ink);
+  color: var(--ab-panel);
+}
+
+.crew-head .ab-btn {
+  margin-left: auto;
+}
+
+.crew-group {
+  margin-top: 10px;
+}
+
+.crew-group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ab-dim);
+  margin: 0 0 5px;
+}
+
+.crew-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas: "lamp name kind" "line line line";
+  gap: 2px 7px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  margin-bottom: 5px;
+  border: 2px solid var(--ab-border);
+  box-shadow: var(--ab-shadow-sm);
+  background: var(--ab-card);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.crew-card[data-needs="true"] {
+  box-shadow: 3px 3px 0 var(--signal-red);
+}
+
+.crew-card .lamp {
+  grid-area: lamp;
+  align-self: center;
+}
+
+.crew-name {
+  grid-area: name;
+  font-size: 13px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.crew-kind {
+  grid-area: kind;
+  font-size: 10px;
+  color: var(--ab-dim);
+}
+
+.crew-line {
+  grid-area: line;
+  font-size: 11px;
+  color: var(--ab-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .crew {
+    flex-basis: 100%;
+  }
 }
 
 @media (max-width: 720px) {
@@ -644,6 +952,9 @@ body {
   }
   .board-controls {
     justify-content: flex-start;
+  }
+  .board-body {
+    flex-direction: column;
   }
 }
 
