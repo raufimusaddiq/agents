@@ -438,22 +438,26 @@ def git_status(repo: str) -> dict:
     out["files"] = files[:300]
     out["files_capped"] = len(files) > 300
     rc, commits = git(repo, "log", "-15", "--pretty=%H|%h|%s|%cI|%d")
+    rc_remotes, remotes_out = git(repo, "remote")
+    has_remote = bool(remotes_out.strip())
     clist = []
     for line in commits.splitlines():
         parts = line.split("|", 4)
         if len(parts) == 5:
             sha, short, subj, date, refs = parts
-            pushed = "origin" in refs or "" in refs and False
-            # a commit is "pushed" if a remote-tracking ref contains it
-            rc2, _ = git(repo, "branch", "-r", "--contains", sha)
-            pushed = rc2 == 0
+            # Measured: `branch -r --contains` returns rc 0 even with no
+            # remotes, so `pushed` must also require a remote to exist.
+            if has_remote:
+                rc2, out2 = git(repo, "branch", "-r", "--contains", sha)
+                pushed = rc2 == 0 and bool(out2.strip())
+            else:
+                pushed = False
             clist.append({"sha": sha, "short": short, "subject": subj,
                           "date": date, "pushed": pushed})
     out["commits"] = clist
     rc, count = git(repo, "rev-list", "--count", "HEAD", "--not", "--remotes")
     out["unpushed_commits"] = int(count.strip() or 0) if rc == 0 else None
-    rc, remotes = git(repo, "remote")
-    out["has_remote"] = bool(remotes.strip())
+    out["has_remote"] = has_remote
     return out
 
 
@@ -597,7 +601,7 @@ def reconcile_agents() -> None:
             rec = STATE.agents.get(pane, {})
             rec.update({
                 "pane": pane,
-                "name": a.get("name") or rec.get("name", ""),
+                "name": a.get("name") or rec.get("name", "") or rec.get("hired_name", ""),
                 "kind": a.get("agent") or rec.get("kind", ""),
                 "cwd": a.get("cwd") or p.get("cwd") or rec.get("cwd", ""),
                 "foreground_cwd": a.get("foreground_cwd", ""),
@@ -705,8 +709,38 @@ def read_screens() -> None:
                 r["ask"] = ask.to_json() if ask else None
                 if ask and getattr(ask, "kind", "") in ("question", "trust"):
                     r["needs_user"] = True
+                # Fallback: a screen that clearly waits for the user (login URL,
+                # device code, a raw question) but does not parse into options
+                # still needs the user. Never guess an answer; offer raw keys.
+                elif _screen_needs_user(screen, r.get("agent_status")):
+                    r["needs_user"] = True
+                    r["ask"] = {
+                        "question": "\n".join(screen[-6:]).strip(),
+                        "options": [], "multi": False, "submit_row": "",
+                        "tabs": [], "context": "unparsed", "kind": "raw",
+                        "raw": "\n".join(screen[-20:]),
+                    }
+                else:
+                    r["needs_user"] = False
             else:
                 r["ask"] = None
+
+
+# A screen that unmistakably waits for the user, even without parsed options.
+_NEEDS_USER_MARKERS = (
+    "paste code here", "paste the code", "enter the code", "sign in",
+    "log in", "login", "authorize", "device code", "press enter",
+    "do you want", "[y/n]", "yes/no", "overwrite?",
+)
+
+
+def _screen_needs_user(screen: list[str], agent_status: str) -> bool:
+    text = "\n".join(screen[-40:]).lower()
+    if any(m in text for m in _NEEDS_USER_MARKERS):
+        return True
+    # Measured: herdr can report `done` while the agent is actually waiting.
+    # Only trust a plain idle/done screen when nothing looks like a question.
+    return False
 
 
 def _track_usage(pane: str, st: dict) -> None:
@@ -1720,6 +1754,15 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
             raise
     if last_err:
         raise last_err
+    # Remember the requested name on the pane record: herdr may not report the
+    # name in its snapshot (measured: codex start that was slow to register).
+    with STATE.lock:
+        rec = STATE.agents.setdefault(pane, {"pane": pane})
+        rec["hired_name"] = name
+        rec["name"] = rec.get("name") or name
+        rec["kind"] = kind
+        rec["cwd"] = folder
+        rec.setdefault("col_since", time.time())
     if message.strip():
         # send once the agent is ready
         for _ in range(20):
@@ -1934,6 +1977,12 @@ def _selfcheck() -> None:
     assert cxask is not None and cxask.options[0].selected
     assert cxask.options[0].label == "Trust and continue"
     assert cx.plan_answer(cxask, 1)[0].keys == ["1"]
+    # Codex idle input box must NOT parse as a menu (measured false positive).
+    assert cx.parse_prompt([
+        "›Ask Codex to do anything",
+        "  GPT-6-Astra default · ~/board-scratch",
+        "  ← for agents · ? for shortcuts",
+    ]) is None
 
     # opencode adapter basics
     oc = OpencodeAdapter()

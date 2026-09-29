@@ -153,13 +153,16 @@ class CodexAdapter(ScreenFallbackMixin, Adapter):
             if c:
                 options.append(Option(number=None, label=c.group(2).strip(),
                                       selected=True))
-        if not options and not has_footer:
+        # Measured: Codex's idle input box also starts with "›Ask Codex to do
+        # anything". That is NOT a menu. Require a numbered option (real menus
+        # always have "1." / "2."), so a lone caret row never counts.
+        numbered = any(o.number is not None for o in options)
+        if not numbered:
             return None
-        kind = "trust" if options and any(
-            "trust" in o.label.lower() for o in options) else "question"
+        kind = "trust" if any("trust" in o.label.lower() for o in options) \
+            else "question"
         q = _question_text(screen_lines, first_idx or len(screen_lines))
-        return Ask(question=q, options=options, multi=False,
-                   kind=kind if options else "permission", raw=text)
+        return Ask(question=q, options=options, multi=False, kind=kind, raw=text)
 
     def plan_answer(self, ask: Ask, answer) -> list[Step]:
         """Measured: Codex trust dialog accepts Enter on the selected row, or a
