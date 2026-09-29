@@ -1,0 +1,35 @@
+:root {
+  --ab-card: #ffffff;
+  --ab-border: #dee2e6;
+  --ab-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --ab-user: #e7f5ff;
+  --ab-reply: #f1f3f5;
+  --ab-answer: #fff3bf;
+  --ab-bg: #f8f9fa;
+}
+
+[data-mantine-color-scheme="dark"] {
+  --ab-card: #24262b;
+  --ab-border: #34363c;
+  --ab-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ab-user: #1c3a52;
+  --ab-reply: #2b2d33;
+  --ab-answer: #4d3f10;
+  --ab-bg: #1a1b1e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--ab-bg);
+}
+
+*:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-5);
+  outline-offset: 2px;
+}

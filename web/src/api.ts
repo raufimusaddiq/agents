@@ -1,0 +1,84 @@
+import type { Agent, Board } from "./types";
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    credentials: "same-origin",
+  });
+  if (res.status === 403) throw new Error("forbidden");
+  if (!res.ok) {
+    let err: { error?: string } = {};
+    try {
+      err = await res.json();
+    } catch {
+      /* ignore */
+    }
+    throw new Error(err.error || `http ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export const api = {
+  login: (password: string) =>
+    req<{ ok: boolean }>("/api/login", {
+      method: "POST",
+      body: JSON.stringify({ password }),
+    }),
+  logout: () => req<{ ok: boolean }>("/api/logout", { method: "POST" }),
+  board: () => req<Board>("/api/board"),
+  agent: (pane: string) =>
+    req<Agent>(`/api/agent?pane=${encodeURIComponent(pane)}`),
+  prompt: (pane: string, text: string) =>
+    req<{ ok: boolean }>("/api/prompt", {
+      method: "POST",
+      body: JSON.stringify({ pane, text }),
+    }),
+  answer: (pane: string, answer: unknown) =>
+    req<{ ok: boolean }>("/api/answer", {
+      method: "POST",
+      body: JSON.stringify({ pane, answer }),
+    }),
+  keys: (pane: string, keys: string[]) =>
+    req<{ ok: boolean }>("/api/keys", {
+      method: "POST",
+      body: JSON.stringify({ pane, keys }),
+    }),
+  focus: (pane: string) =>
+    req<{ ok: boolean }>("/api/focus", {
+      method: "POST",
+      body: JSON.stringify({ pane }),
+    }),
+  hire: (body: Record<string, string>) =>
+    req<{ ok: boolean }>("/api/hire", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  rehire: (key: string) =>
+    req<{ ok: boolean }>("/api/rehire", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }),
+  dismiss: (key: string) =>
+    req<{ ok: boolean }>("/api/dismiss", {
+      method: "POST",
+      body: JSON.stringify({ key }),
+    }),
+  remind: (pane: string) =>
+    req<{ ok: boolean }>("/api/remind", {
+      method: "POST",
+      body: JSON.stringify({ pane }),
+    }),
+  diff: (repo: string, opts: { path?: string; sha?: string }) =>
+    req<{ diff: string }>("/api/diff", {
+      method: "POST",
+      body: JSON.stringify({ repo, ...opts }),
+    }),
+  removeWorktree: (path: string) =>
+    req<{ ok: boolean }>("/api/worktree_remove", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
+  screen: (pane: string) =>
+    req<{ lines: string[] }>(`/api/screen?pane=${encodeURIComponent(pane)}`),
+};
