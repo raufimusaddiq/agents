@@ -1,4 +1,5 @@
 import type { AgentChipData } from "../types";
+import { RobotAvatar } from "./RobotAvatar";
 import { statusLamp } from "./TicketCard";
 
 /** The crew: every agent on the shift, grouped by runtime state. */
@@ -71,7 +72,14 @@ export function Crew({
                   data-needs={a.needs_user}
                   onClick={() => onOpenAgent(a.pane)}
                 >
-                  <span className={`lamp ${lamp.cls}`} aria-hidden />
+                  <span className="crew-avatar">
+                    <RobotAvatar
+                      name={a.name}
+                      kind={a.kind}
+                      status={a.agent_status}
+                      size={34}
+                    />
+                  </span>
                   <span className="crew-name">{a.name}</span>
                   <span className="crew-kind">{a.kind}</span>
                   <span className="crew-line">{a.last_line}</span>

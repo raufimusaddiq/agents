@@ -1,3 +1,4 @@
+import { RobotAvatar } from "./RobotAvatar";
 import type { AgentChipData, Ticket } from "../types";
 
 const KIND_COLOR: Record<string, string> = {
@@ -39,7 +40,12 @@ export function AgentChip({
       aria-label={`agent ${agent.name}`}
       data-needs={agent.needs_user}
     >
-      <span className={`lamp ${lamp.cls}`} aria-hidden />
+      <RobotAvatar
+        name={agent.name}
+        kind={agent.kind}
+        status={agent.agent_status}
+        size={22}
+      />
       <span className="chip-name">{agent.name}</span>
       <span
         className="chip-kind"

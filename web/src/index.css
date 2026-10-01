@@ -1030,8 +1030,9 @@ body {
 .crew-card {
   display: grid;
   grid-template-columns: auto 1fr auto;
-  grid-template-areas: "lamp name kind" "line line line";
-  gap: 2px 7px;
+  grid-template-areas: "avatar name kind" "avatar line line";
+  gap: 2px 8px;
+  align-items: center;
   width: 100%;
   text-align: left;
   padding: 6px 8px;
@@ -1042,6 +1043,17 @@ body {
   color: inherit;
   font: inherit;
   cursor: pointer;
+}
+
+.crew-avatar {
+  grid-area: avatar;
+  display: flex;
+  align-items: center;
+}
+
+.crew-card:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 3px 3px 0 var(--ab-border);
 }
 
 .crew-card[data-needs="true"] {
@@ -2550,7 +2562,7 @@ fieldset.panel-ask {
   white-space: nowrap;
 }
 
-/* ---------------------------------------------------- shop floor */
+/* ------------------------------------------------------- floor (2D) */
 
 .floor {
   position: relative;
@@ -2558,141 +2570,137 @@ fieldset.panel-ask {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 54px 24px 24px;
+  padding: 48px 12px 16px;
 }
 
-.floor-stations {
+.floor-ruler {
   position: absolute;
-  top: 10px;
-  left: 24px;
-  right: 24px;
-  height: 34px;
+  top: 8px;
+  left: 12px;
+  right: 12px;
+  height: 30px;
+}
+
+.ruler-cell {
+  position: absolute;
+  top: 0;
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 6px;
+  padding: 0 8px;
 }
 
-.floor-station {
-  display: flex;
-  justify-content: center;
-}
-
-.station-sign {
-  padding: 3px 10px;
+.ruler-dot {
+  width: 10px;
+  height: 10px;
   border: 2px solid var(--ab-border);
-  color: var(--ab-ink);
-  background: var(--ab-card) !important;
+  flex-shrink: 0;
+}
+
+.ruler-name {
+  font-family: "Bungee", Arial Black, sans-serif;
   font-size: 11px;
-  box-shadow: var(--ab-shadow-sm);
+  color: var(--ab-ink);
   white-space: nowrap;
-  border-left-width: 7px;
-}
-
-.floor-stations .floor-station:first-child {
-  justify-content: flex-start;
-}
-.floor-stations .floor-station:last-child {
-  justify-content: flex-end;
-}
-
-/* the belt */
-.floor-rail {
-  position: absolute;
-  left: 24px;
-  right: 24px;
-  top: 84px;
-  height: 8px;
-  background: repeating-linear-gradient(
-    to right,
-    var(--ab-rivet) 0 10px,
-    transparent 10px 20px
-  );
-  border-top: 2px solid var(--ab-border);
-  border-bottom: 2px solid var(--ab-border);
-}
-
-.rail-tick {
-  position: absolute;
-  top: -5px;
-  width: 3px;
-  height: 14px;
-  background: var(--ab-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .floor-lanes {
   position: relative;
-  min-height: 260px;
-  margin-top: 20px;
+  min-height: 240px;
 }
 
-.floor-lane {
+.lane-grid {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 2px;
-  background: color-mix(in srgb, var(--ab-border) 25%, transparent);
+  border-left: 2px dashed color-mix(in srgb, var(--ab-border) 30%, transparent);
+  pointer-events: none;
 }
 
-/* a ticket rides on the belt; it slides when its stage changes */
-.floor-cart {
+.lane-row {
   position: absolute;
   top: 0;
-  transform: translateX(-50%);
+  padding: 4px 6px;
   transition: left 600ms cubic-bezier(0.2, 0.9, 0.2, 1);
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  align-items: center;
-  width: 168px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .floor-cart {
+  .lane-row {
     transition: none;
   }
 }
 
-.cart-body {
-  width: 100%;
-  border: 2px solid var(--ab-border);
-  background: var(--ab-card);
-  box-shadow: var(--ab-shadow-sm);
-  padding: 6px 8px;
-  text-align: center;
+.lane-row + .lane-row {
+  margin-top: 10px;
 }
 
-.floor-cart[data-needs="true"] .cart-body {
-  box-shadow: 3px 3px 0 var(--signal-red);
+.floor-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-.cart-name {
-  display: block;
-  font-size: 12px;
+.lane-grid {
+  grid-row: 1 / -1;
+}
+
+.lane-ticket {
+  padding: 8px 10px;
+  border-left-width: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lane-ticket[data-needs="true"] {
+  box-shadow: 4px 4px 0 var(--signal-red);
+}
+
+.lane-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.lane-name {
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cart-stage {
-  display: block;
+.lane-flag {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  background: var(--signal-red-deep);
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.lane-meta {
   font-size: 10px;
   color: var(--ab-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.cart-agents {
+.lane-agents {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  width: 100%;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 2px;
 }
 
-.cart-agent {
+.lane-agent {
   display: flex;
   align-items: center;
   gap: 5px;
-  width: 100%;
-  text-align: left;
-  padding: 3px 6px;
+  padding: 2px 6px;
   border: 1.5px solid var(--ab-border);
   background: var(--ab-panel);
   color: inherit;
@@ -2700,43 +2708,31 @@ fieldset.panel-ask {
   cursor: pointer;
 }
 
-.cart-agent:hover,
-.cart-agent:focus-visible {
+.lane-agent:hover,
+.lane-agent:focus-visible {
   background: var(--ab-answer);
 }
 
-.cart-agent-name {
+.lane-agent-name {
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cart-wheel {
+.floor-empty {
   position: absolute;
-  bottom: -12px;
-  left: 34%;
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--ab-border);
-  border-radius: 50%;
-  background: var(--ab-ink);
-}
-
-.cart-wheel-2 {
-  left: 62%;
+  top: 20px;
+  left: 8px;
+  color: var(--ab-dim);
+  font-size: 13px;
 }
 
 @media (max-width: 720px) {
   .floor {
-    padding: 54px 12px 24px;
+    padding: 48px 6px 16px;
   }
-  .floor-stations,
-  .floor-rail {
-    left: 12px;
-    right: 12px;
-  }
-  .floor-cart {
-    width: 128px;
+  .ruler-name {
+    display: none;
   }
 }

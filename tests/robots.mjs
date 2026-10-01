@@ -1,0 +1,20 @@
+import { chromium } from "playwright-core";
+import { homedir } from "node:os"; import { join } from "node:path";
+process.env.LD_LIBRARY_PATH = `${join(homedir(),".local","lib","agent-board")}:${process.env.LD_LIBRARY_PATH||""}`;
+const b=await chromium.launch({headless:true});
+const ctx=await b.newContext({viewport:{width:1440,height:900}});
+const p=await ctx.newPage();
+p.on("pageerror", e=>console.log("PAGEERROR",String(e).slice(0,200)));
+await p.goto("http://127.0.0.1:8792",{waitUntil:"domcontentloaded"});
+await p.waitForTimeout(1200);
+if(await p.getByLabel("board password").count()){await p.getByLabel("board password").fill("board-test-pw");await p.getByRole("button",{name:"Sign in"}).click();}
+await p.locator('[aria-label^="column "]').first().waitFor({timeout:15000});
+await p.waitForTimeout(800);
+console.log("board robots:", await p.locator('.robot').count());
+await p.getByTestId("view-toggle").click(); await p.waitForTimeout(800);
+console.log("floor robots:", await p.locator('.robot').count());
+console.log("crew robots:", await p.locator('.crew-avatar .robot').count());
+await p.screenshot({path:"/tmp/opencode/robots-floor.png",fullPage:true});
+await p.getByTestId("view-toggle").click(); await p.waitForTimeout(500);
+await p.screenshot({path:"/tmp/opencode/robots-board.png",fullPage:true});
+await b.close();
