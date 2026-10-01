@@ -1192,7 +1192,7 @@ def _selfcheck() -> None:
     assert _screen_needs_user(
         ["lots of history", "Paste code here if prompted >"],
         "idle")
-    # scrolled-off history is not a prompt (bottom of screen is the composer).
+    # scrolled-off history is not a prompt (marker out of the bottom window).
     assert not _screen_needs_user(
         ["Do you want to continue?"] + [f"  output line {i}" for i in range(40)]
         + ["› Ask Codex to do anything", "GPT default · ~/repo"], "idle")
@@ -1200,7 +1200,15 @@ def _selfcheck() -> None:
     assert _screen_needs_user(
         ["Do you want to allow this?", "› 1. Yes", "  2. No"],
         "unknown", "codex")
-    # codex: a plain composer with no numbered options is not a prompt.
+    # codex: a real login prompt that has no numbered menu still flags.
+    assert _screen_needs_user(
+        ["Welcome to Codex", "Sign in: enter the code", "Paste it here"],
+        "idle", "codex")
+    # codex: the marker on the composer line itself is the user's own draft.
+    assert not _screen_needs_user(
+        ["› do you want to continue? ", "GPT default · ~/repo"],
+        "idle", "codex")
+    # codex: a plain composer with no marker is not a prompt.
     assert not _screen_needs_user(
         ["› Ask Codex to do anything", "GPT default · ~/repo"],
         "idle", "codex")

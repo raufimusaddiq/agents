@@ -390,14 +390,17 @@ def _screen_needs_user(screen: list[str], agent_status: str, kind: str = "") -> 
         return False
     tail = [ln for ln in screen[-6:] if ln.strip()]
     text = "\n".join(tail).lower()
-    if not any(m in text for m in _NEEDS_USER_MARKERS):
+    hit = next((m for m in _NEEDS_USER_MARKERS if m in text), None)
+    if not hit:
         return False
-    # Codex draws its ordinary input box with a "›" caret; a line under it that
-    # is a numbered choice is a real prompt, otherwise this is just the composer.
+    # Codex draws its ordinary input box as "› Ask Codex to do anything". A
+    # marker that sits on that composer line is the user's own draft or the
+    # box's own placeholder, not a prompt. A marker anywhere else (a login
+    # screen, an approval) is real.
     if kind == "codex":
-        numbered = any(re.match(r"^\s*(›)?\s*\d+\.\s", ln) for ln in screen[-8:])
-        if not numbered:
-            return False
+        for ln in tail:
+            if "›" in ln and hit in ln.lower():
+                return False
     return True
 
 

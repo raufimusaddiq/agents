@@ -46,6 +46,41 @@ presses Enter, because the text is already in the agent's composer. This means
 the menus are exactly the ones the CLI would show, including fuzzy filtering and
 any harness-specific behavior.
 
+## Chat
+
+Each agent's conversation is read from its own harness transcript and rendered
+the way the harness draws it: prompts, replies (markdown), tool calls with their
+input and result (edits as diffs), subagent runs, questions the agent asked you,
+`!` shell commands, and the live task list pinned at the top. A transcript that
+can't be read falls back to the screen tail; the same renderer serves every
+harness because the server normalizes both paths to one item shape.
+
+## Views: board and shop floor
+
+Toggle **Board ⇄ Floor** in the header:
+
+- **Board** — the kanban of tickets by work stage.
+- **Floor** — a CSS-only shop floor: stations on a conveyor, each ticket a cart
+  that slides to the stage it reached, agents as status lamps riding the cart.
+  Motion happens only when a stage changes (a transform transition), never on a
+  timer, and there is no canvas or WebGL, so an idle floor costs nothing.
+
+## Notifications and reports
+
+- **Push review** (agent panel → Push): what an agent asking to push would send
+  — the commits, the stat and the full diff. The board never pushes.
+- **While you were away** — after 30+ minutes off the page, a per-agent digest of
+  what changed; anything waiting on you goes first.
+- **Restart risk** (`/api/risk`) — per agent, uncommitted files, unpushed
+  commits, context, and whether the repo is shared.
+- **Usage** (`/api/usage`) — 5h/7d percentages with a rising trend and an ETA.
+
+## Personas
+
+A hire can carry a **role** — a system prompt passed to Claude at start
+(`--append-system-prompt`) and saved per install for reuse. Set it in the Hire
+dialog's *Role* field or via `POST /api/persona`.
+
 ## Workspaces and agents
 
 A herdr **workspace holds one or more tabs; each tab is one agent**. Hiring
@@ -90,14 +125,41 @@ board/
   terminal.py        browser terminal: herdr TUI over WebSocket + pty
   workflow.py        git command rules, the nine stations, ticket inference
   worktrees.py       parked worktrees (native herdr, git fallback)
+  chat.py            rich chat from a transcript (tools, questions, todos)
+  suggest.py         `/` commands and `@` files for the composer
+  reports.py         push review, digest, restart risk, usage forecast
   core.py            live state, polling, board building
-  hire.py            hire/fire, workspaces, folder picker
+  hire.py            hire/fire, workspaces, worktrees, personas
 adapters/            one module per harness (claude, codex, opencode)
+  ask.py             rich Claude prompt parsing (ported, pure functions)
 web/                 Vite + React + Mantine front end
+  src/components/    Chat, Composer, Tools, Floor, Crew, TicketCard, …
 ```
 
 `server.py` runs `_selfcheck()` at every start: asserts over the parsers,
-`plan_answer`, the workflow rules and the auth checks.
+`plan_answer`, the workflow rules, the ticket inference, the upload path guard
+and the auth checks.
+
+## HTTP API
+
+| route | what |
+| --- | --- |
+| `GET /api/board` | tickets, agents, worktrees, alerts |
+| `GET /api/agent?pane=` | one agent: chat, git, status, ask |
+| `GET /api/chat?pane=` | rich chat items + todos |
+| `GET /api/suggest?pane=&kind=&q=` | composer completions |
+| `GET /api/pushinfo?pane=` | what a push would send |
+| `GET /api/risk` | restart risk per agent |
+| `GET /api/usage` | 5h/7d with ETA |
+| `GET /api/digest?since=` | while-you-were-away |
+| `GET /api/personas` · `POST /api/persona` | saved roles |
+| `POST /api/prompt` `/api/answer` `/api/keys` `/api/type` `/api/menu` | drive an agent |
+| `POST /api/hire` `/api/fire` `/api/rehire` | crew changes |
+| `POST /api/worktree_create` `/api/worktree_remove` `/api/worktree_open` | worktrees |
+| `GET /ws/terminal?pane=&cols=&rows=` | full herdr TUI |
+
+All `/api` routes and the WebSocket require a valid session or a machine token,
+and an allow-listed `Host`/`Origin`.
 
 ## Configuration — `config.json`
 
@@ -256,7 +318,16 @@ Point them at a disposable board server with `BOARD_URL` before running them:
 # or, with sudo: npx playwright-core install-deps chromium
 
 node tests/a11y.mjs                 # axe, both themes, 1280px + 375px
+node tests/a11y-floor.mjs           # axe on the shop floor view
 node tests/smoke.mjs                # screenshots
+node tests/tickets.mjs              # ticket model: chips, stage rollup, parked
+node tests/floor.mjs                # shop floor renders and toggles
+node tests/chat-rich.mjs            # chat bubbles/tools, auto-scroll
+node tests/chat-scroll.mjs          # chat stays pinned to the newest message
+node tests/composer2.mjs            # / and @ suggestions, ! bash mode
+node tests/persona.mjs              # role field in Hire
+node tests/terminal.mjs             # browser terminal over WebSocket
+node tests/closed.mjs               # off-shift strip
 BOARD_URL=http://127.0.0.1:8794 E2E_KIND=opencode node tests/e2e.mjs
 BOARD_URL=http://127.0.0.1:8794 E2E_KIND=codex   node tests/e2e.mjs
 BOARD_URL=http://127.0.0.1:8794 E2E_KIND=claude  node tests/e2e.mjs
