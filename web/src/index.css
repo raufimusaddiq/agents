@@ -2561,178 +2561,231 @@ fieldset.panel-ask {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* ------------------------------------------------------------ shop */
 
-/* ------------------------------------------------------- floor (2D) */
-
-.floor {
+.shop {
   position: relative;
   flex: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 48px 12px 16px;
+  padding: 12px;
 }
 
-.floor-ruler {
+/* a faint tiled floor */
+.shop-tiles {
   position: absolute;
-  top: 8px;
-  left: 12px;
-  right: 12px;
-  height: 30px;
-}
-
-.ruler-cell {
-  position: absolute;
-  top: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-}
-
-.ruler-dot {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--ab-border);
-  flex-shrink: 0;
-}
-
-.ruler-name {
-  font-family: "Bungee", Arial Black, sans-serif;
-  font-size: 11px;
-  color: var(--ab-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.floor-lanes {
-  position: relative;
-  min-height: 240px;
-}
-
-.lane-grid {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-left: 2px dashed color-mix(in srgb, var(--ab-border) 30%, transparent);
+  inset: 0;
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--ab-border) 14%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--ab-border) 14%, transparent) 1px, transparent 1px);
+  background-size: 26px 26px;
   pointer-events: none;
 }
 
-.lane-row {
+.shop-aisle {
   position: absolute;
   top: 0;
-  padding: 4px 6px;
-  transition: left 600ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  bottom: 0;
+  width: 2px;
+  background: repeating-linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--marigold) 70%, transparent) 0 10px,
+    transparent 10px 20px
+  );
+  pointer-events: none;
+}
+
+.shop-benches {
+  display: flex;
+  position: relative;
+  z-index: 1;
+}
+
+.shop-column {
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+
+/* a bench seen from above */
+.bench {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 120px;
+}
+
+.bench-top {
+  position: relative;
+  border: 3px solid var(--ab-ink);
+  background: var(--ab-card);
+  box-shadow: var(--ab-shadow-sm);
+  border-radius: 3px;
+  padding: 8px;
+  min-height: 76px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.bench-sign {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: 2px solid var(--ab-ink);
+  border-left-width: 8px;
+  background: var(--ab-panel);
+  color: var(--ab-ink);
+  font-size: 10px;
+}
+
+.bench-tools {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.bench-tool {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid var(--ab-ink);
+}
+
+.bench-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.job-card {
+  display: block;
+  padding: 3px 7px;
+  border: 2px solid var(--ab-ink);
+  background: var(--ab-panel);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-card[data-needs="true"] {
+  background: var(--signal-red-deep);
+  color: #fff;
+}
+
+/* workers, positioned on the floor */
+.shop-workers {
+  position: relative;
+  z-index: 2;
+  height: 120px;
+  margin-top: 8px;
+}
+
+.worker-slot {
+  position: absolute;
+  transition:
+    left 700ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    top 700ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .lane-row {
+  .worker-slot {
     transition: none;
   }
 }
 
-.lane-row + .lane-row {
-  margin-top: 10px;
-}
-
-.floor-lanes {
+.worker {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-}
-
-.lane-grid {
-  grid-row: 1 / -1;
-}
-
-.lane-ticket {
-  padding: 8px 10px;
-  border-left-width: 7px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.lane-ticket[data-needs="true"] {
-  box-shadow: 4px 4px 0 var(--signal-red);
-}
-
-.lane-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.lane-name {
-  font-size: 13px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lane-flag {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 6px;
-  background: var(--signal-red-deep);
-  color: #fff;
-  flex-shrink: 0;
-}
-
-.lane-meta {
-  font-size: 10px;
-  color: var(--ab-dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.lane-agents {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 2px;
-}
-
-.lane-agent {
-  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 2px 6px;
-  border: 1.5px solid var(--ab-border);
-  background: var(--ab-panel);
+  gap: 1px;
+  padding: 0;
+  border: none;
+  background: transparent;
   color: inherit;
   font: inherit;
   cursor: pointer;
+  position: relative;
 }
 
-.lane-agent:hover,
-.lane-agent:focus-visible {
-  background: var(--ab-answer);
-}
-
-.lane-agent-name {
-  font-size: 11px;
+.worker-label {
+  font-size: 10px;
+  max-width: 78px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: var(--ab-panel);
+  border: 1px solid var(--ab-border);
+  padding: 0 3px;
 }
 
-.floor-empty {
+.worker-flag {
   position: absolute;
-  top: 20px;
-  left: 8px;
+  top: -4px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--signal-red);
+  color: #fff;
+  border: 2px solid var(--ab-card);
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 11px;
+  animation: worker-flag 1s steps(2, jump-none) infinite;
+}
+
+@keyframes worker-flag {
+  50% {
+    transform: scale(0.7);
+  }
+}
+
+.wk-arm {
+  transform-origin: 50% 50%;
+}
+
+.worker.is-working .wk-arm-l {
+  animation: wk-pump 0.8s ease-in-out infinite;
+}
+.worker.is-working .wk-arm-r {
+  animation: wk-pump 0.8s ease-in-out infinite reverse;
+}
+
+@keyframes wk-pump {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-6deg);
+  }
+  50% {
+    transform: translateY(3px) rotate(6deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wk-arm-l,
+  .wk-arm-r,
+  .worker-flag {
+    animation: none !important;
+  }
+}
+
+.shop-empty {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   color: var(--ab-dim);
   font-size: 13px;
 }
 
 @media (max-width: 720px) {
-  .floor {
-    padding: 48px 6px 16px;
+  .shop-column {
+    padding: 0 4px;
   }
-  .ruler-name {
-    display: none;
+  .bench-sign {
+    font-size: 9px;
+    padding: 1px 5px;
   }
 }
