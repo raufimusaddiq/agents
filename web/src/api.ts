@@ -29,6 +29,13 @@ export const api = {
   board: () => req<Board>("/api/board"),
   agent: (pane: string) =>
     req<Agent>(`/api/agent?pane=${encodeURIComponent(pane)}`),
+  chat: (pane: string) =>
+    req<{
+      ok: boolean;
+      source: string;
+      items: unknown[];
+      todos?: unknown[];
+    }>(`/api/chat?pane=${encodeURIComponent(pane)}`),
   prompt: (pane: string, text: string) =>
     req<{ ok: boolean }>("/api/prompt", {
       method: "POST",

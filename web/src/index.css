@@ -1146,7 +1146,7 @@ body {
 
 .agent-panel {
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   padding: 0 14px 16px;
   display: flex;
   flex-direction: column;
@@ -1231,6 +1231,7 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 4px;
+  flex: 0 1 auto;
 }
 
 .chat-scroll::-webkit-scrollbar {
@@ -1309,6 +1310,10 @@ body {
   border: 2px solid var(--ab-border);
   background: #101014;
   box-shadow: var(--ab-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 180px;
 }
 
 .screen-tail-head {
@@ -1345,7 +1350,8 @@ body {
 .screen-tail-body {
   margin: 0;
   padding: 8px 10px;
-  height: 180px;
+  flex: 1 1 auto;
+  min-height: 140px;
   overflow: auto;
   overscroll-behavior: contain;
   font-family: ui-monospace, monospace;
@@ -1918,6 +1924,34 @@ body {
   border-bottom-color: var(--ab-col-ready);
 }
 
+.panel-tabs {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The chat tab fills the panel; the live screen grows into leftover height so
+   there is no dead space under it. Mantine v9 hides inactive panels with the
+   `hidden` attribute, so target the visible one directly. */
+.panel-tabs .mantine-Tabs-panel {
+  min-height: 0;
+}
+
+.panel-tabs .mantine-Tabs-panel:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The chat tab manages its own inner scrollers. */
+.panel-tabs .mantine-Tabs-panel.panel-chat:not([hidden]) {
+  overflow: hidden;
+}
+
 .panel-name,
 .ticket-name,
 .park-branch,
@@ -2059,4 +2093,310 @@ fieldset.panel-ask {
   border: 0;
   padding: 0;
   min-width: 0;
+}
+
+/* ---------------------------------------------- rich chat (ported) */
+
+.todo-pin {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding: 6px 6px 0;
+  background: var(--ab-panel);
+}
+
+.todo-card {
+  border: 2px solid var(--ab-border);
+  background: var(--ab-card);
+  box-shadow: var(--ab-shadow-sm);
+  padding: 7px 9px;
+}
+
+.todo-bar {
+  flex: 1;
+  height: 6px;
+  border: 1.5px solid var(--ab-border);
+  background: var(--ab-panel);
+  overflow: hidden;
+}
+
+.todo-bar i {
+  display: block;
+  height: 100%;
+  background: var(--ab-col-ship);
+  transition: width 200ms ease;
+}
+
+.todo {
+  align-items: center;
+}
+
+.todo.completed .mantine-Text-root {
+  text-decoration: line-through;
+  color: var(--ab-dim);
+}
+
+.chat-turn {
+  display: flex;
+  flex-direction: column;
+}
+
+.bubble {
+  padding: 7px 10px;
+  border: 2px solid var(--ab-border);
+  border-radius: var(--ab-radius);
+  box-shadow: var(--ab-shadow-sm);
+}
+
+.bubble.mine {
+  background: var(--ab-user);
+}
+
+.bubble.theirs {
+  background: var(--ab-reply);
+}
+
+.bubble .md > *:first-child {
+  margin-top: 0;
+}
+
+.bubble .md > *:last-child {
+  margin-bottom: 0;
+}
+
+.bubble .md p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.bubble .md pre {
+  margin: 6px 0;
+  padding: 7px 9px;
+  overflow: auto;
+  max-height: 320px;
+  background: #101014;
+  color: #d8e0c8;
+  font-family: ui-monospace, monospace;
+  font-size: 11.5px;
+}
+
+.bubble .md code {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  background: color-mix(in srgb, var(--ab-ink) 8%, transparent);
+  padding: 1px 4px;
+}
+
+.bubble .md pre code {
+  background: none;
+  padding: 0;
+}
+
+.bubble .md ul,
+.bubble .md ol {
+  margin: 4px 0;
+  padding-left: 20px;
+  font-size: 13px;
+}
+
+.bubble .md a {
+  color: var(--ab-col-test);
+}
+
+.screen-bubble {
+  margin: 0;
+  padding: 7px 9px;
+  border: 2px solid var(--ab-border);
+  background: #101014;
+  color: #d8e0c8;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.shell-bubble {
+  border: 2px solid var(--ab-border);
+  border-left: 6px solid var(--ab-col-go);
+  background: var(--ab-card);
+  box-shadow: var(--ab-shadow-sm);
+  padding: 6px 9px;
+  align-self: flex-end;
+  max-width: 90%;
+}
+
+.shell-cmd {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shell-cmd .bang {
+  color: var(--signal-red-deep);
+  margin-right: 4px;
+}
+
+.shell-bubble pre {
+  margin: 5px 0 0;
+  max-height: 240px;
+  overflow: auto;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.chat-question {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 2px solid var(--ab-border);
+  border-left: 6px solid var(--marigold);
+  background: var(--ab-card);
+  box-shadow: var(--ab-shadow-sm);
+  padding: 9px 11px;
+}
+
+.q-opt {
+  border-radius: 0;
+}
+
+.q-opt.is-picked {
+  background: color-mix(in srgb, var(--ab-col-ship) 22%, transparent);
+}
+
+/* tool calls */
+.tool {
+  border-left: 3px solid var(--ab-col-idle);
+  padding-left: 8px;
+  margin-left: 2px;
+}
+
+.tool.run {
+  border-left-color: var(--ab-col-test);
+}
+
+.tool.err {
+  border-left-color: var(--signal-red);
+}
+
+.tool-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 2px 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.tool-dot {
+  color: var(--ab-dim);
+  flex-shrink: 0;
+}
+
+.tool-name {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.tool-arg {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ab-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-sum {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--ab-dim);
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tool-chev {
+  flex-shrink: 0;
+  color: var(--ab-dim);
+  transition: transform 140ms ease;
+}
+
+.tool-body {
+  margin: 3px 0 6px;
+}
+
+.tool-out {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 320px;
+  overflow: auto;
+  background: #101014;
+  color: #d8e0c8;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tool-diff {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 320px;
+  overflow: auto;
+  background: #101014;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  white-space: pre;
+}
+
+.tool-diff .dl {
+  color: #d8e0c8;
+}
+
+.tool-diff .dl.add {
+  color: #8fd07a;
+}
+
+.tool-diff .dl.del {
+  color: #ff9c8a;
+}
+
+.tool-diff .dl.hunk {
+  color: #7fb8e0;
+}
+
+.tool-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  padding: 3px 0 3px 8px;
+  border-left: 3px solid var(--ab-col-idle);
+  color: var(--ab-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.subagent {
+  border: 2px solid var(--ab-border);
+  border-left: 6px solid var(--ab-col-test);
+  background: var(--ab-card);
+  box-shadow: var(--ab-shadow-sm);
+  padding: 7px 9px;
+}
+
+.subagent.done {
+  border-left-color: var(--ab-col-ship);
+}
+
+.subagent.failed {
+  border-left-color: var(--signal-red);
 }

@@ -46,7 +46,7 @@ from board.config import DEFAULT_CONFIG, _config_lock, load_config, config, _dee
 from board.herdr import HerdrError, _herdr_env, herdr, herdr_text, snapshot, PANE_RE, SHA_RE, NAME_RE, TICKET_RE, ALLOWED_KEYS, valid_pane, valid_keys, read_screen, _extract_read_text
 from board.security import hash_password, verify_password, Sessions, SESSIONS, _secrets_lock, _save_machine_tokens, _load_machine_tokens, origin_allowed, _audit_lock, audit
 from board.gitrepo import git, repo_root, git_status, git_diff_file, git_diff_commit
-from board.core import State, _Queue, STATE, _norm_events, reconcile_agents, _detect_kind, _session_id_for, poll_transcripts, read_screens, _NEEDS_USER_MARKERS, _screen_needs_user, _track_usage, feedback_signature, poll_loop, save_roster, check_roster_restart, _prune_closed, _event_is_recent, _detect_alerts, _add_alert, build_board, _compat_cards, _worktree_index, _last_line, build_agent, _build_chat
+from board.core import State, _Queue, STATE, _norm_events, reconcile_agents, _detect_kind, _session_id_for, poll_transcripts, read_screens, _NEEDS_USER_MARKERS, _screen_needs_user, _track_usage, feedback_signature, poll_loop, save_roster, check_roster_restart, _prune_closed, _event_is_recent, _detect_alerts, _add_alert, build_board, _compat_cards, _worktree_index, _last_line, build_agent, _build_chat, chat_payload
 from board.workflow import CODE_EXT, STATIONS, shell_commands, classify_git, edited_code_files, has_test_action, has_review_action, compute_stations, STAGE_ORDER, _STATION_TO_STAGE, agent_stage, ticket_stage, _first_prompt, _branch_ticket, derive_ticket
 from board.notify import _last_page_seen, _page_lock, note_page_open, page_recently_open, notify, _send_webhook, _board_url
 from board.terminal import _WS_TEXT, _WS_BINARY, _WS_CLOSE, _WS_PING, _WS_PONG, _WS_GUID, _ws_accept, _ws_send, _ws_recv, TerminalSession, serve_terminal
@@ -181,6 +181,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             note_page_open()
             pane = urllib.parse.parse_qs(p.query).get("pane", [""])[0]
             self._json(200, build_agent(pane))
+            return
+        if path == "/api/chat":
+            if not self._auth():
+                return self._deny()
+            note_page_open()
+            pane = urllib.parse.parse_qs(p.query).get("pane", [""])[0]
+            if not valid_pane(pane):
+                self._json(400, {"error": "bad_pane"})
+                return
+            self._json(200, chat_payload(pane))
             return
         if path == "/api/events":
             if not self._auth():

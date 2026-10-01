@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Modal, ScrollArea, Tabs } from "@mantine/core";
-import type { Agent, ChatRow } from "../types";
+import type { Agent } from "../types";
 import { api } from "../api";
 import { AnswerCard } from "./AnswerCard";
 const TerminalModal = lazy(() =>
@@ -9,69 +9,8 @@ const TerminalModal = lazy(() =>
   })),
 );
 import { Composer } from "./Composer";
+import { ChatView } from "./Chat";
 import { statusLamp } from "./TicketCard";
-
-function ChatThread({ rows }: { rows: ChatRow[] }) {
-  const boxRef = useRef<HTMLDivElement | null>(null);
-  const pinned = useRef(true);
-
-  // Keep the newest message in view, unless the user scrolled up to read.
-  useEffect(() => {
-    const el = boxRef.current;
-    if (!el || !pinned.current) return;
-    el.scrollTop = el.scrollHeight;
-  }, [rows]);
-
-  function onScroll() {
-    const el = boxRef.current;
-    if (!el) return;
-    // 24px tolerance so a jittery scrollbar does not unpin.
-    pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
-  }
-
-  return (
-    <div
-      ref={boxRef}
-      className="chat-scroll"
-      onScroll={onScroll}
-      data-testid="chat-scroll"
-    >
-      <div className="chat-thread">
-        {rows.map((r, i) => {
-          if (r._fold) {
-            return (
-              <p key={i} className="chat-fold mono">
-                {r._fold === "tool" ? r.tool || "tool" : r._fold}
-                {r.path ? ` ${r.path}` : ""}
-                {r.command ? ` $ ${r.command.slice(0, 80)}` : ""}
-                {r.subagent_type ? ` [${r.subagent_type}]` : ""}
-                {r._count && r._count > 1 ? ` ×${r._count}` : ""}
-              </p>
-            );
-          }
-          const isUser = r.kind === "prompt";
-          const isAnswer = r.kind === "answer" || r.kind === "question";
-          return (
-            <div
-              key={i}
-              className={
-                "chat-line " +
-                (isAnswer ? "is-question" : isUser ? "is-you" : "is-agent")
-              }
-            >
-              <span className="chat-who">
-                {isAnswer ? "question" : isUser ? "you" : "agent"}
-              </span>
-              <p className="chat-text" data-testid={`chat-${r.kind}`}>
-                {r.answer || r.text}
-              </p>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 /**
  * The live terminal tail. Auto-scrolls to the newest line and stays pinned
@@ -629,8 +568,12 @@ export function AgentPanel({
           <Tabs.Tab value="safety">Safety</Tabs.Tab>
         </Tabs.List>
 
-        <Tabs.Panel value="chat" pt="sm">
-          <ChatThread rows={agent.chat} />
+        <Tabs.Panel value="chat" pt="sm" className="panel-chat">
+          <ChatView
+            pane={agent.pane}
+            label={agent.name}
+            status={agent.agent_status || "unknown"}
+          />
           <Composer
             key={agent.pane}
             pane={agent.pane}

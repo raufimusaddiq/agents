@@ -50,6 +50,7 @@ from .workflow import (
     _branch_ticket,
     derive_ticket,
 )
+from .chat import chat_for  # noqa: E402
 from .notify import (
     _last_page_seen,
     _page_lock,
@@ -644,6 +645,22 @@ def _last_line(rec: dict, events: list[dict]) -> str:
     return ""
 
 
+def chat_payload(pane: str) -> dict:
+    """Just the chat for a pane: the poll target for the open conversation."""
+    with STATE.lock:
+        rec = STATE.agents.get(pane)
+        events = list(STATE.events.get(pane, []))
+    if not rec:
+        return {"ok": False, "error": "not_found"}
+    sid = rec.get("session_id", "")
+    if sid:
+        r = chat_for(sid, rec.get("screen_tail", []) or [])
+        if r.get("source") != "screen":
+            return {"ok": True, **r}
+    return {"ok": True, "source": "events", "items": _build_chat(events),
+            "todos": []}
+
+
 def build_agent(pane: str) -> dict:
     with STATE.lock:
         rec = STATE.agents.get(pane)
@@ -654,11 +671,18 @@ def build_agent(pane: str) -> dict:
     repo = repo_root(rec.get("cwd") or "")
     status_git = git_status(repo) if repo else None
     adapter = get_adapter(rec.get("kind", ""))
-    chat = _build_chat(events)
+    # Rich chat from the transcript when we have one (measured for Claude Code);
+    # otherwise fold the normalized events we already read.
+    sid = rec.get("session_id", "")
+    rich = chat_for(sid, rec.get("screen_tail", []) or []) if sid else \
+        {"source": "events", "items": _build_chat(events), "todos": []}
+    if rich.get("source") == "screen":
+        rich["items"] = _build_chat(events) or rich["items"]
     return {
         "pane": pane, "name": rec.get("name") or pane, "kind": rec.get("kind"),
         "cwd": rec.get("cwd"), "repo": repo, "git": status_git,
-        "chat": chat, "alerts": alerts,
+        "chat": rich["items"], "chat_source": rich.get("source"),
+        "todos": rich.get("todos", []), "alerts": alerts,
         "supports": adapter.supports if adapter else {},
         "notes": adapter.notes if adapter else [],
         "ask": rec.get("ask"), "screen_tail": rec.get("screen_tail", []),
@@ -672,21 +696,67 @@ def build_agent(pane: str) -> dict:
 
 
 def _build_chat(events: list[dict]) -> list[dict]:
-    """Prompts, replies, tool runs folded into one row, Q&A pairs."""
-    out = []
+    """Fold normalized events into the chat shape the UI renders.
+
+    Used for harnesses whose transcript we do not read line-by-line (opencode,
+    codex) — the same roles the rich Claude chat uses, so one renderer serves all.
+    """
+    out: list[dict] = []
     for e in events:
         k = e.get("kind")
-        if k in ("prompt", "reply", "answer", "question"):
-            out.append(e)
-        elif k in ("edit", "bash", "subagent_start", "subagent_end", "tokens", "tool"):
-            if out and out[-1].get("_fold") == k:
-                out[-1]["_count"] = out[-1].get("_count", 1) + 1
-                continue
-            row = dict(e)
-            row["_fold"] = k
-            row["_count"] = 1
-            out.append(row)
+        if k == "prompt":
+            out.append({"role": "user", "text": e.get("text", ""), "ts": e.get("ts")})
+        elif k == "reply":
+            out.append({"role": "assistant", "text": e.get("text", ""),
+                        "ts": e.get("ts")})
+        elif k == "question":
+            q = e.get("ask") or {}
+            out.append({"role": "question", "id": e.get("tool_use_id", ""),
+                        "ts": e.get("ts"), "answers": None,
+                        "questions": _norm_questions(q.get("questions", []))})
+        elif k == "answer":
+            out.append({"role": "assistant",
+                        "text": f"answered: {e.get('answer', '')}",
+                        "ts": e.get("ts")})
+        elif k in ("edit", "bash", "subagent_start", "subagent_end", "tool",
+                   "tokens"):
+            name = ("Bash" if k == "bash" else
+                    "Task" if k == "subagent_start" else
+                    e.get("tool") or k.title())
+            tool = {"id": e.get("tool_use_id") or f"{k}:{len(out)}",
+                    "name": name,
+                    "detail": e.get("path") or e.get("command") or
+                              (e.get("subagent_type") or ""),
+                    "result": None, "error": False, "ts": e.get("ts"),
+                    "command": e.get("command") or None,
+                    "result_lines": None}
+            if name in ("Agent", "Task"):
+                tool.update(agent=e.get("subagent_type") or "agent",
+                            task=(e.get("text") or "")[:120],
+                            background=bool(e.get("background")),
+                            status="done" if k == "subagent_end" else "running")
+            if out and out[-1].get("role") == "tools":
+                out[-1]["tools"].append(tool)
+            else:
+                out.append({"role": "tools", "tools": [tool], "ts": e.get("ts")})
     return out[-500:]
+
+
+def _norm_questions(raw: list) -> list[dict]:
+    """Normalize AskUserQuestion payloads to the shape the chat renders."""
+    out = []
+    for q in raw or []:
+        if not isinstance(q, dict):
+            continue
+        out.append({
+            "question": q.get("question", ""),
+            "header": q.get("header", ""),
+            "multiSelect": bool(q.get("multiSelect")),
+            "options": [{"label": o.get("label", ""),
+                         "description": o.get("description", "")}
+                        for o in q.get("options") or [] if isinstance(o, dict)],
+        })
+    return out
 
 
 
