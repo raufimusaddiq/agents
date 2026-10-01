@@ -36,6 +36,12 @@ export const api = {
       items: unknown[];
       todos?: unknown[];
     }>(`/api/chat?pane=${encodeURIComponent(pane)}`),
+  suggest: (pane: string, kind: string, q: string) =>
+    req<{ items: { name: string; description?: string; source?: string }[] }>(
+      `/api/suggest?pane=${encodeURIComponent(pane)}&kind=${encodeURIComponent(
+        kind,
+      )}&q=${encodeURIComponent(q)}`,
+    ),
   prompt: (pane: string, text: string) =>
     req<{ ok: boolean }>("/api/prompt", {
       method: "POST",

@@ -12,7 +12,7 @@ if(await p.getByLabel("board password").count()){await p.getByLabel("board passw
 await p.locator('[aria-label^="column "]').first().waitFor({timeout:15000});
 await p.locator('[aria-label="agent boardprobe"]').click();
 await p.locator('[aria-label^="agent panel"]').waitFor({timeout:8000});
-const box = p.getByLabel("message agent");
+const box = p.getByLabel(/^Message /);
 async function clearAll(){
   await box.fill("");           // mirrors full clear with backspaces
   await p.waitForTimeout(1200);

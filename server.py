@@ -42,14 +42,37 @@ STATE_DIR = ROOT / "state"
 AUDIT_PATH = ROOT / "audit.jsonl"
 ROSTER_PATH = ROOT / "roster.json"
 SECRETS_PATH = ROOT / "secrets.json"
+UPLOADS = ROOT / "uploads"
+
+
+def _save_upload(name: str, data: bytes) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]", "_", Path(name or "file").name)
+    safe = safe.lstrip(".")[:80] or "file"
+    d = UPLOADS / time.strftime("%Y-%m-%d")
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"{secrets.token_hex(4)}-{safe}"
+    p.write_bytes(data)
+    p.chmod(0o600)
+    return p
+
+
+def _upload_path(q: str) -> Path | None:
+    """Only files this app saved: anything else, including ../ and symlinks out,
+    is refused."""
+    try:
+        p = Path(q).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
+    return p if UPLOADS.resolve() in p.parents and p.is_file() else None
 from board.config import DEFAULT_CONFIG, _config_lock, load_config, config, _deep_merge, save_config
 from board.herdr import HerdrError, _herdr_env, herdr, herdr_text, snapshot, PANE_RE, SHA_RE, NAME_RE, TICKET_RE, ALLOWED_KEYS, valid_pane, valid_keys, read_screen, _extract_read_text
 from board.security import hash_password, verify_password, Sessions, SESSIONS, _secrets_lock, _save_machine_tokens, _load_machine_tokens, origin_allowed, _audit_lock, audit
 from board.gitrepo import git, repo_root, git_status, git_diff_file, git_diff_commit
-from board.core import State, _Queue, STATE, _norm_events, reconcile_agents, _detect_kind, _session_id_for, poll_transcripts, read_screens, _NEEDS_USER_MARKERS, _screen_needs_user, _track_usage, feedback_signature, poll_loop, save_roster, check_roster_restart, _prune_closed, _event_is_recent, _detect_alerts, _add_alert, build_board, _compat_cards, _worktree_index, _last_line, build_agent, _build_chat, chat_payload
+from board.core import State, _Queue, STATE, _norm_events, reconcile_agents, _detect_kind, _session_id_for, poll_transcripts, read_screens, _NEEDS_USER_MARKERS, _screen_needs_user, _track_usage, feedback_signature, poll_loop, save_roster, check_roster_restart, _prune_closed, _event_is_recent, _detect_alerts, _add_alert, build_board, _compat_cards, _worktree_index, _last_line, build_agent, _build_chat, chat_payload, agent_cwd
 from board.workflow import CODE_EXT, STATIONS, shell_commands, classify_git, edited_code_files, has_test_action, has_review_action, compute_stations, STAGE_ORDER, _STATION_TO_STAGE, agent_stage, ticket_stage, _first_prompt, _branch_ticket, derive_ticket
 from board.notify import _last_page_seen, _page_lock, note_page_open, page_recently_open, notify, _send_webhook, _board_url
 from board.terminal import _WS_TEXT, _WS_BINARY, _WS_CLOSE, _WS_PING, _WS_PONG, _WS_GUID, _ws_accept, _ws_send, _ws_recv, TerminalSession, serve_terminal
+from board.suggest import suggest, rank
 from board.worktrees import list_worktrees, _repos_from_herdr, _herdr_worktrees, _git_worktrees, _clean_branch, YOLO_ARGS, yolo_args
 from board.hire import _hire_impl, _default_wt_branch, create_agent_worktree, worktree_removal_blocker, remove_agent_worktree, _remove_worktree_by_path, _new_shell_pane, _workspace_mode, list_workspaces, _rehire_impl, _find_closed, list_folders, _has_dir, settings_public
 
@@ -207,6 +230,35 @@ class Handler(http.server.BaseHTTPRequestHandler):
             audit(getattr(self, "_request_user", "user"), "read_screen", pane)
             self._json(200, {"lines": self._body_screen(pane)})
             return
+        if path == "/api/suggest":
+            if not self._auth():
+                return self._deny()
+            q = urllib.parse.parse_qs(p.query)
+            pane = q.get("pane", [""])[0]
+            kind = q.get("kind", ["file"])[0]
+            text = q.get("q", [""])[0][:200]
+            if not valid_pane(pane):
+                self._json(400, {"error": "bad_pane"})
+                return
+            cwd = agent_cwd(pane)
+            self._json(200, {"items": suggest(cwd, kind, text)})
+            return
+        if path == "/api/upload":
+            if not self._auth():
+                return self._deny()
+            q = urllib.parse.parse_qs(p.query).get("path", [""])[0]
+            fp = _upload_path(q)
+            if not fp:
+                self._json(404, {"error": "not_found"})
+                return
+            data = fp.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == "/api/worktrees":
             if not self._auth():
                 return self._deny()
@@ -248,6 +300,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         path = p.path
         if path == "/api/login":
             self._login()
+            return
+        if path == "/api/upload":
+            # Raw bytes, not JSON: the file name comes in a header. The file is
+            # saved under our own uploads dir and handed to the agent as an
+            # @path mention; the agent never sees a client-supplied path.
+            user = self._auth()
+            if not user:
+                return self._deny()
+            name = urllib.parse.unquote(self.headers.get("X-Filename", "file"))
+            n = int(self.headers.get("Content-Length", "0"))
+            if n <= 0 or n > 25_000_000:
+                self._json(413, {"error": "too_large"})
+                return
+            data = self.rfile.read(n)
+            p2 = _save_upload(name, data)
+            audit(user, "upload", extra={"bytes": len(data)})
+            self._json(200, {"ok": True, "path": str(p2)})
             return
         if path == "/api/notify":
             # agents on other machines post alerts here with a machine token
@@ -1094,6 +1163,14 @@ def _selfcheck() -> None:
     assert not _screen_needs_user(
         ["› Ask Codex to do anything", "GPT default · ~/repo"],
         "idle", "codex")
+
+    # upload path guard: only files under our own uploads dir are ever served.
+    assert _upload_path("/etc/passwd") is None
+    assert _upload_path("/home/ubuntu/.ssh/id_rsa") is None
+    # suggestion ranking: prefix beats substring beats subsequence
+    items = [{"name": "model"}, {"name": "mcp"}, {"name": "reload-plugins"}]
+    top = rank(items, "mod", key=lambda c: c["name"])
+    assert top and top[0]["name"] == "model", top
 
     print("selfcheck: OK")
 

@@ -113,7 +113,7 @@ async function answerAsk(page, name) {
   if (await card.count()) {
     await card.click();
     const panel = page.locator(`[aria-label^="agent panel ${UNIQUE}"]`);
-    await panel.getByLabel("message agent").fill("Reply with exactly: E2E_PONG");
+    await panel.getByLabel(/^Message /).fill("Reply with exactly: E2E_PONG");
     await panel.getByRole("button", { name: "Send" }).click();
     await page.waitForTimeout(15000);
     const txt = await panel.innerText();

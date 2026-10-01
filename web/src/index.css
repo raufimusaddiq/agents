@@ -2400,3 +2400,72 @@ fieldset.panel-ask {
 .subagent.failed {
   border-left-color: var(--signal-red);
 }
+
+/* ------------------------------------------------ composer extras */
+
+.composer-wrap.drag {
+  outline: 3px dashed var(--ab-focus);
+  outline-offset: 3px;
+}
+
+.shell-badge {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding: 4px 9px;
+  border: 2px solid var(--ab-border);
+  background: var(--ab-answer);
+  font-size: 12px;
+}
+
+.shell-badge span {
+  color: var(--ab-dim);
+  font-size: 11px;
+}
+
+.attach-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.attach {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px;
+  border: 2px solid var(--ab-border);
+  background: var(--ab-card);
+  max-width: 220px;
+}
+
+.attach.bad {
+  border-color: var(--signal-red);
+}
+
+.attach img {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border: 1px solid var(--ab-border);
+}
+
+.attach-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.drop-hint {
+  margin-bottom: 6px;
+  padding: 6px;
+  text-align: center;
+  border: 2px dashed var(--ab-focus);
+  color: var(--ab-dim);
+  font-size: 12px;
+}
+
+.menu-kind {
+  margin-left: auto;
+}

@@ -17,3 +17,4 @@ secrets.json
 config.local.json
 .playwright/
 test-results/
+uploads/

@@ -577,7 +577,9 @@ export function AgentPanel({
           <Composer
             key={agent.pane}
             pane={agent.pane}
-            onSent={load}
+            label={agent.name}
+            cwd={agent.cwd}
+            onSend={load}
             readOnly={readOnly}
           />
           {agent.screen_tail && agent.screen_tail.length > 0 && (

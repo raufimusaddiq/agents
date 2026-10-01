@@ -645,6 +645,13 @@ def _last_line(rec: dict, events: list[dict]) -> str:
     return ""
 
 
+def agent_cwd(pane: str) -> str:
+    """The working folder of the agent in a pane, for file suggestions."""
+    with STATE.lock:
+        rec = STATE.agents.get(pane)
+    return (rec or {}).get("cwd", "") or ""
+
+
 def chat_payload(pane: str) -> dict:
     """Just the chat for a pane: the poll target for the open conversation."""
     with STATE.lock:
