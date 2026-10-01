@@ -1,0 +1,26 @@
+import { chromium } from "playwright-core";
+import { homedir } from "node:os"; import { join } from "node:path";
+process.env.LD_LIBRARY_PATH = `${join(homedir(),".local","lib","agent-board")}:${process.env.LD_LIBRARY_PATH||""}`;
+let pass=0,fail=0; const chk=(n,c,d="")=>{c?(pass++,console.log("  PASS",n)):(fail++,console.log("  FAIL",n,d));};
+const b=await chromium.launch({headless:true});
+const ctx=await b.newContext({viewport:{width:1440,height:900}});
+const p=await ctx.newPage();
+p.on("pageerror", e=>console.log("PAGEERROR",String(e).slice(0,200)));
+await p.goto("http://127.0.0.1:8792",{waitUntil:"domcontentloaded"});
+await p.waitForTimeout(1200);
+if(await p.getByLabel("board password").count()){await p.getByLabel("board password").fill("board-test-pw");await p.getByRole("button",{name:"Sign in"}).click();}
+await p.locator('[aria-label^="column "]').first().waitFor({timeout:15000});
+await p.getByTestId("view-toggle").click();
+await p.waitForTimeout(800);
+chk("floor renders", (await p.locator('.floor').count())>0);
+chk("stations shown", (await p.locator('.station-sign').count())>0, String(await p.locator('.station-sign').count()));
+chk("carts shown", (await p.locator('.floor-cart').count())>0, String(await p.locator('.floor-cart').count()));
+const cart = p.locator('.floor-cart').first();
+console.log("  cart:", (await cart.innerText()).replace(/\n/g," ").slice(0,70));
+await p.screenshot({path:"/tmp/opencode/floor.png",fullPage:true});
+await p.getByTestId("view-toggle").click();
+await p.waitForTimeout(500);
+chk("toggles back to board", (await p.locator('.floor').count())===0);
+await b.close();
+console.log(`\nFLOOR: ${pass} passed, ${fail} failed`);
+process.exit(fail?1:0);

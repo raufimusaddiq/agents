@@ -4,6 +4,7 @@ import type { Board, FolderListing, Worktree } from "../types";
 import { api } from "../api";
 import { TicketCard } from "./TicketCard";
 import { Crew } from "./Crew";
+import { FloorView } from "./Floor";
 import { useFlip } from "../flip";
 
 function FolderPicker({
@@ -469,6 +470,12 @@ export function BoardView({
   );
   const [hireOpen, setHireOpen] = useState(false);
   const [closedOpen, setClosedOpen] = useState(false);
+  const [view, setView] = useState<"board" | "floor">(
+    typeof window !== "undefined" &&
+      window.localStorage?.getItem("ab-view") === "floor"
+      ? "floor"
+      : "board",
+  );
   const [hirePreset, setHirePreset] =
     useState<{ folder: string; name: string } | null>(null);
   const ref = useFlip(
@@ -573,6 +580,24 @@ export function BoardView({
             onClick={() => setCrewOpen((v) => !v)}
           >
             Crew
+          </button>
+          <button
+            type="button"
+            className="ab-btn board-ctl"
+            aria-pressed={view === "floor"}
+            data-active={view === "floor"}
+            data-testid="view-toggle"
+            onClick={() => {
+              const next = view === "floor" ? "board" : "floor";
+              setView(next);
+              try {
+                window.localStorage?.setItem("ab-view", next);
+              } catch {
+                /* private mode */
+              }
+            }}
+          >
+            {view === "floor" ? "Board" : "Floor"}
           </button>
           <button
             type="button"
@@ -690,6 +715,9 @@ export function BoardView({
       )}
 
       <div className="board-body">
+        {view === "floor" ? (
+          <FloorView board={board} onSelect={onSelect} />
+        ) : (
         <div
           ref={ref}
           className="board-columns"
@@ -751,6 +779,7 @@ export function BoardView({
             );
           })}
         </div>
+        )}
 
         {crewOpen && (
           <Crew
