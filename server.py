@@ -184,7 +184,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path in ("/", "/index.html"):
             self._serve_static("index.html")
             return
-        if path.startswith("/assets/") or path.startswith("/fonts/"):
+        if path.startswith(("/assets/", "/fonts/", "/shop/")):
             self._serve_static(path.lstrip("/"))
             return
         if path == "/api/capabilities":

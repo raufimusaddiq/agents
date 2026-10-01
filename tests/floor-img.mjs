@@ -4,16 +4,15 @@ process.env.LD_LIBRARY_PATH = `${join(homedir(),".local","lib","agent-board")}:$
 const b=await chromium.launch({headless:true});
 const ctx=await b.newContext({viewport:{width:1440,height:900}});
 const p=await ctx.newPage();
-p.on("pageerror", e=>console.log("PAGEERROR",String(e).slice(0,200)));
-p.on("response", r=>{ if(r.url().includes("/shop/") && r.status()>=400) console.log("404", r.url()); });
 await p.goto("http://127.0.0.1:8792",{waitUntil:"domcontentloaded"});
 await p.waitForTimeout(1200);
 if(await p.getByLabel("board password").count()){await p.getByLabel("board password").fill("board-test-pw");await p.getByRole("button",{name:"Sign in"}).click();}
 await p.locator('[aria-label^="column "]').first().waitFor({timeout:15000});
 await p.getByTestId("view-toggle").click(); await p.waitForTimeout(900);
-console.log("rooms:", await p.locator('.room-pad').count(), "walls:", await p.locator('.wall-tile').count(), "workers:", await p.locator('.worker').count(), "crates:", await p.locator('.job-crate').count());
-for (const w of (await p.locator('.worker-token').all()).slice(0,4)) {
-  const box = await w.boundingBox(); if (box) console.log(" worker@", Math.round(box.x), Math.round(box.y));
-}
-await p.screenshot({path:"/tmp/opencode/shopmap.png",fullPage:true});
+const bg = await p.locator('.map-floor').evaluate(el=>getComputedStyle(el).backgroundImage);
+console.log("floor bg:", bg.slice(0,60));
+const spriteOk = await p.locator('.worker-sprite').first().evaluate(el=>el.complete && el.naturalWidth>0);
+console.log("robot sprite loaded:", spriteOk);
+const wallOk = await p.locator('.wall-tile').first().evaluate(el=>el.complete && el.naturalWidth>0);
+console.log("wall tile loaded:", wallOk);
 await b.close();

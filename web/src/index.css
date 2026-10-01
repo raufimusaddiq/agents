@@ -2561,9 +2561,9 @@ fieldset.panel-ask {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* ------------------------------------------------------------ shop */
+/* ------------------------------------------------------- shop map */
 
-.shop {
+.shop-map {
   position: relative;
   flex: 1;
   min-width: 0;
@@ -2572,124 +2572,119 @@ fieldset.panel-ask {
   padding: 12px;
 }
 
-/* a faint tiled floor */
-.shop-tiles {
+.map-canvas {
+  position: relative;
+  border: 3px solid var(--ab-ink);
+  box-shadow: var(--ab-shadow);
+  margin: 0 auto;
+  image-rendering: pixelated;
+}
+
+/* the tiled concrete floor */
+.map-floor {
   position: absolute;
   inset: 0;
-  background-image:
-    linear-gradient(to right, color-mix(in srgb, var(--ab-border) 14%, transparent) 1px, transparent 1px),
-    linear-gradient(to bottom, color-mix(in srgb, var(--ab-border) 14%, transparent) 1px, transparent 1px);
-  background-size: 26px 26px;
-  pointer-events: none;
+  image-rendering: pixelated;
+  opacity: 0.96;
 }
 
-.shop-aisle {
+/* a room: a tinted pad inside its wall run */
+.room-pad {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: repeating-linear-gradient(
-    to bottom,
-    color-mix(in srgb, var(--marigold) 70%, transparent) 0 10px,
-    transparent 10px 20px
-  );
-  pointer-events: none;
-}
-
-.shop-benches {
-  display: flex;
-  position: relative;
+  background: color-mix(in srgb, var(--room-tint) 22%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--room-tint) 70%, var(--ab-ink));
   z-index: 1;
 }
 
-.shop-column {
-  padding: 0 8px;
-  box-sizing: border-box;
-}
-
-/* a bench seen from above */
-.bench {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 120px;
-}
-
-.bench-top {
-  position: relative;
-  border: 3px solid var(--ab-ink);
-  background: var(--ab-card);
-  box-shadow: var(--ab-shadow-sm);
-  border-radius: 3px;
-  padding: 8px;
-  min-height: 76px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  justify-content: space-between;
-}
-
-.bench-sign {
-  align-self: flex-start;
+.room-sign {
+  position: absolute;
+  top: 6px;
+  left: 6px;
   padding: 2px 8px;
   border: 2px solid var(--ab-ink);
   border-left-width: 8px;
+  border-left-color: var(--room-tint);
   background: var(--ab-panel);
   color: var(--ab-ink);
   font-size: 10px;
+  white-space: nowrap;
+  z-index: 2;
 }
 
-.bench-tools {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
+.wall-tile {
+  position: absolute;
+  width: 64px;
+  height: 64px;
+  image-rendering: pixelated;
+  z-index: 2;
+  pointer-events: none;
 }
 
-.bench-tool {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid var(--ab-ink);
+.crate-slot {
+  position: absolute;
+  z-index: 3;
 }
 
-.bench-cards {
+.job-crate {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
-.job-card {
-  display: block;
-  padding: 3px 7px;
-  border: 2px solid var(--ab-ink);
-  background: var(--ab-panel);
-  font-size: 11px;
+.job-crate:focus-visible {
+  outline: 3px solid var(--ab-focus);
+  outline-offset: 2px;
+}
+
+.job-crate-label {
+  font-size: 9px;
+  max-width: 62px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  background: var(--ab-card);
+  border: 1.5px solid var(--ab-ink);
+  padding: 0 3px;
 }
 
-.job-card[data-needs="true"] {
+.job-crate[data-needs="true"] .job-crate-label {
   background: var(--signal-red-deep);
   color: #fff;
 }
 
-/* workers, positioned on the floor */
-.shop-workers {
-  position: relative;
-  z-index: 2;
-  height: 120px;
-  margin-top: 8px;
+.job-crate-flag {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  width: 15px;
+  height: 15px;
+  display: grid;
+  place-items: center;
+  background: var(--signal-red);
+  color: #fff;
+  border: 2px solid var(--ab-card);
+  border-radius: 50%;
+  font-weight: 700;
+  font-size: 10px;
 }
 
-.worker-slot {
+.worker-token {
   position: absolute;
+  z-index: 4;
   transition:
     left 700ms cubic-bezier(0.2, 0.9, 0.2, 1),
     top 700ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .worker-slot {
+  .worker-token {
     transition: none;
   }
 }
@@ -2706,6 +2701,26 @@ fieldset.panel-ask {
   font: inherit;
   cursor: pointer;
   position: relative;
+}
+
+.worker-sprite {
+  image-rendering: pixelated;
+  filter: drop-shadow(0 3px 2px #00000044);
+  transform: rotate(var(--robot-tilt, 0deg));
+}
+
+.worker.is-working .worker-sprite {
+  animation: worker-bob 0.7s ease-in-out infinite;
+}
+
+@keyframes worker-bob {
+  0%,
+  100% {
+    transform: rotate(var(--robot-tilt, 0deg)) translateY(0);
+  }
+  50% {
+    transform: rotate(var(--robot-tilt, 0deg)) translateY(-2px);
+  }
 }
 
 .worker-label {
@@ -2742,30 +2757,8 @@ fieldset.panel-ask {
   }
 }
 
-.wk-arm {
-  transform-origin: 50% 50%;
-}
-
-.worker.is-working .wk-arm-l {
-  animation: wk-pump 0.8s ease-in-out infinite;
-}
-.worker.is-working .wk-arm-r {
-  animation: wk-pump 0.8s ease-in-out infinite reverse;
-}
-
-@keyframes wk-pump {
-  0%,
-  100% {
-    transform: translateY(0) rotate(-6deg);
-  }
-  50% {
-    transform: translateY(3px) rotate(6deg);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .wk-arm-l,
-  .wk-arm-r,
+  .worker-sprite,
   .worker-flag {
     animation: none !important;
   }
@@ -2773,19 +2766,16 @@ fieldset.panel-ask {
 
 .shop-empty {
   position: absolute;
-  top: 40%;
+  top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
   color: var(--ab-dim);
   font-size: 13px;
 }
 
-@media (max-width: 720px) {
-  .shop-column {
-    padding: 0 4px;
-  }
-  .bench-sign {
-    font-size: 9px;
-    padding: 1px 5px;
-  }
+.shop-credit {
+  margin: 10px auto 0;
+  width: max-content;
+  font-size: 10px;
+  color: var(--ab-dim);
 }

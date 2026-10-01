@@ -12,15 +12,15 @@ if(await p.getByLabel("board password").count()){await p.getByLabel("board passw
 await p.locator('[aria-label^="column "]').first().waitFor({timeout:15000});
 await p.getByTestId("view-toggle").click();
 await p.waitForTimeout(800);
-chk("floor renders", (await p.locator('.shop').count())>0);
-chk("benches shown", (await p.locator('.bench').count())>0, String(await p.locator('.bench').count()));
+chk("floor renders", (await p.locator('.shop-map').count())>0);
+chk("rooms shown", (await p.locator('.room-pad').count())>0, String(await p.locator('.room-pad').count()));
 chk("workers shown", (await p.locator('.worker').count())>=0, String(await p.locator('.worker').count()));
 const w = p.locator('.worker').first();
 if (await w.count()) console.log("  worker:", (await w.innerText()).replace(/\n/g," ").slice(0,70));
 await p.screenshot({path:"/tmp/opencode/floor.png",fullPage:true});
 await p.getByTestId("view-toggle").click();
 await p.waitForTimeout(500);
-chk("toggles back to board", (await p.locator('.shop').count())===0);
+chk("toggles back to board", (await p.locator('.shop-map').count())===0);
 await b.close();
 console.log(`\nFLOOR: ${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);
