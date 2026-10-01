@@ -104,6 +104,16 @@ class ClaudeAdapter(Adapter):
     # ---- screen parsing -------------------------------------------------
 
     def parse_prompt(self, screen_lines: list[str]) -> Ask | None:
+        # Rich parser first (ported from the reference implementation): it
+        # handles dividers, preview boxes, wrapped labels, Submit rows and tab
+        # headers better than the simpler line scan below, which remains as the
+        # fallback for menus it declines to claim.
+        rich = _try_rich_ask(screen_lines)
+        if rich is not None:
+            return rich
+        return self._parse_prompt_simple(screen_lines)
+
+    def _parse_prompt_simple(self, screen_lines: list[str]) -> Ask | None:
         lines = [PREVIEW_CUT_RE.sub("", ln) for ln in screen_lines]
         text = "\n".join(lines)
         has_footer = (FOOTER_SELECT in text or FOOTER_CONFIRM in text
@@ -264,6 +274,36 @@ class ClaudeAdapter(Adapter):
                 out.setdefault("model", s[:60])
                 break
         return out
+
+
+def _try_rich_ask(screen_lines: list[str]) -> Ask | None:
+    """Adapt the ported parse_ask result to our Ask, or None if it declined."""
+    from .ask import parse_ask
+    d = parse_ask(screen_lines)
+    if not d or not d.get("options"):
+        return None
+    opts: list[Option] = []
+    for o in d["options"]:
+        # Our Ask.number is the digit the user presses (1-based), not an index.
+        n = int(o["n"]) if o.get("n") else None
+        opts.append(Option(
+            number=n, label=o.get("label", ""),
+            description=o.get("description", ""),
+            selected=bool(o.get("selected")),
+            checked=bool(o.get("checked")),
+            kind=o.get("kind", "choice"),
+            preview=o.get("preview", "") or "",
+        ))
+    # The rich parser's Submit row is separate from the numbered options.
+    submit = d.get("submit") or None
+    return Ask(
+        question=d.get("question") or "",
+        options=opts, multi=bool(d.get("multi")),
+        submit_row="Submit" if submit else "",
+        tabs=[t.get("label", "") for t in d.get("tabs", [])],
+        context=d.get("context") or "",
+        kind="question", raw="\n".join(screen_lines),
+    )
 
 
 def _is_footer(s: str) -> bool:
