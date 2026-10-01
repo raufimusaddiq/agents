@@ -51,6 +51,9 @@ from .workflow import (
     derive_ticket,
 )
 from .chat import chat_for  # noqa: E402
+from .reports import (  # noqa: E402
+    push_info, digest, restart_risk, usage_forecast,
+)
 from .notify import (
     _last_page_seen,
     _page_lock,
@@ -285,10 +288,18 @@ def read_screens() -> None:
         st = adapter.session_status(rec.get("session_id", "")) if adapter else {}
         if adapter and adapter.supports.get("status_line"):
             st.update(adapter.status_line(screen))
+        # A permission prompt replaces the status block, which would blank the
+        # model/ctx/cost/mode. Measured: keep the last values seen instead.
+        sticky = ("model", "context_pct", "cost", "mode", "usage_5h_pct",
+                  "usage_5h_reset", "usage_7d_pct", "usage_7d_reset", "tokens")
         with STATE.lock:
             r = STATE.agents.get(pane)
             if not r:
                 continue
+            old = r.get("status") or {}
+            for k in sticky:
+                if not st.get(k) and old.get(k):
+                    st[k] = old[k]
             r["screen_tail"] = screen[-60:]
             r["status"] = st
             _track_usage(pane, st)
@@ -650,6 +661,29 @@ def agent_cwd(pane: str) -> str:
     with STATE.lock:
         rec = STATE.agents.get(pane)
     return (rec or {}).get("cwd", "") or ""
+
+
+def push_payload(pane: str) -> dict:
+    return push_info(agent_cwd(pane))
+
+
+def risk_payload() -> dict:
+    with STATE.lock:
+        agents = dict(STATE.agents)
+    return restart_risk(agents)
+
+
+def usage_payload() -> dict:
+    with STATE.lock:
+        screens = {p: dict(r.get("status") or {}) for p, r in STATE.agents.items()}
+    u = usage_forecast(screens)
+    return {"ok": True, "usage": u}
+
+
+def digest_payload(since: float) -> dict:
+    with STATE.lock:
+        agents = dict(STATE.agents)
+    return digest(agents, chat_payload, since)
 
 
 def chat_payload(pane: str) -> dict:

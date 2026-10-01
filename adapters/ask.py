@@ -198,3 +198,40 @@ def plan_answer(ask, pick=None, picks=None, text=None):
         move("submit")
     steps.append(("keys", ["enter"]))
     return steps
+
+
+def parse_status(lines):
+    """Everything in Claude Code's status block (the lines under the input box), plus any unsent text in that box."""
+    div = [i for i, l in enumerate(lines) if l.strip() and set(l.strip()) <= set("\u2500 ") or re.match(r"^\u2500{10,}.*\u2500$", l.strip())]
+    inp = next((i for i in range(len(lines) - 1, -1, -1) if lines[i].lstrip().startswith("\u276f") and not OPTION.match(lines[i])), None)
+    if inp is None:
+        return {}
+    block = [l for l in lines[inp + 1:] if l.strip() and not re.match(r"^\s*\u2500+", l)]
+    text = "\n".join(block)
+    grab = lambda rx: (m.group(1).strip() if (m := re.search(rx, text)) else None)
+    out = {
+        "status_lines": [re.split(r"\s{3,}", l.strip())[0] for l in block],
+        # right-aligned text on the status block (update ready, rate limits), minus fragments that are not notices: a bare
+        # duration ("2s") and the effort badge ("◐ medium · /effort"), which the effort control shows instead
+        "notices": [seg for l in block for seg in re.split(r"\s{3,}", l.strip())[1:]
+                    if seg and len(seg) > 5 and not re.fullmatch(r"[\d\s.hms]+", seg) and "/effort" not in seg],
+        "ticket": grab(r"\U0001f464\s*([^\s\u2502]+)"), "title": grab(r"\U0001f4ac\s*([^\u2502]+?)(?:\s{3,}|\s*\u2502|$)"),
+        "folder": grab(r"\U0001f4c1\s*([^\s\u2502]+)"), "branch": grab(r"\U0001f33f\s*([^\s\u2502]+)"),
+        "tokens": grab(r"ctx[^\n]*?\d{1,3}%\s+([\d.]+[kKmM]?/[\d.]+[kKmM]?)"),
+        "lines_added": grab(r"\U0001f4b2[\d.]+\s*\+(\d+)"), "lines_removed": grab(r"\U0001f4b2[\d.]+\s*\+\d+/-(\d+)"),
+        "usage_5h": grab(r"5h\s+(\d{1,3})%"), "reset_5h": grab(r"5h\s+\d{1,3}%\s*\u21bb\s*(\S+)"),
+        "usage_7d": grab(r"7d\s+(\d{1,3})%"), "reset_7d": grab(r"7d\s+\d{1,3}%\s*\u21bb\s*(\S+)"),
+        "mode_line": grab(r"[\u23f5\u23f8]+\s*([^\n]*mode on[^\n]*|accept edits on[^\n]*)"),  # ⏵⏵ auto/accept, ⏸ plan/manual
+    }
+    if out["mode_line"]:
+        out["mode_line"] = out["mode_line"].replace("(shift+tab to cycle)", "").replace("  ", " ").strip(" \u00b7")
+    draft = lines[inp].lstrip().lstrip("\u276f").replace("\xa0", " ").strip()
+    out["draft"] = draft if draft and not draft.startswith(("Press up", "Try \"")) else None
+    return out
+
+
+STATUS_KEYS = ("ctx", "model", "cost", "mode", "ticket", "title", "folder", "branch", "tokens", "lines_added", "lines_removed",
+               "usage_5h", "reset_5h", "usage_7d", "reset_7d", "mode_line", "status_lines", "notices", "effort")
+
+
+_pages = [0]  # browser tabs on the live stream; with none open, alerts go to the macOS notification centre instead

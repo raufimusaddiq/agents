@@ -248,26 +248,55 @@ class ClaudeAdapter(Adapter):
         return items
 
     def status_line(self, screen_lines: list[str]) -> dict:
-        """Measured: bottom line has model, ctx NN%, $NN.NN, 5h NN% ↻, 7d NN% ↻."""
-        text = "\n".join(screen_lines)
+        """Measured: the status block sits under the input box. Use the rich
+        ported parser, then fall back to a plain scan for the login/menu screens
+        that have no status block."""
+        from .ask import parse_status
+        rich = parse_status(screen_lines) or {}
         out: dict = {}
+        if rich.get("usage_5h") is not None:
+            out["usage_5h_pct"] = int(rich["usage_5h"])
+        if rich.get("reset_5h"):
+            out["usage_5h_reset"] = rich["reset_5h"]
+        if rich.get("usage_7d") is not None:
+            out["usage_7d_pct"] = int(rich["usage_7d"])
+        if rich.get("reset_7d"):
+            out["usage_7d_reset"] = rich["reset_7d"]
+        if rich.get("tokens"):
+            m = re.match(r"([\d.]+[kKmM]?)/", rich["tokens"])
+            if m:
+                out["tokens"] = m.group(1)
+        if rich.get("mode_line"):
+            out["mode"] = rich["mode_line"]
+        if rich.get("notices"):
+            out["notices"] = rich["notices"][:3]
+        if rich.get("draft"):
+            out["draft"] = rich["draft"]
+        if rich.get("folder") or rich.get("branch"):
+            out["folder"] = rich.get("folder")
+            out["branch"] = rich.get("branch")
+        # ctx % and cost are drawn as "ctx 42%" / "$1.23" on the status line.
+        text = "\n".join(screen_lines)
         m = re.search(r"\bctx\s*\.*\s*(\d{1,3})%", text)
         if m:
             out["context_pct"] = int(m.group(1))
         m = re.search(r"\$(\d+(?:\.\d+)?)", text)
         if m:
             out["cost"] = float(m.group(1))
-        m = re.search(r"5h\s+(\d{1,3})%\s*↻(\d+h\d+m|\d+m)", text)
-        if m:
-            out["usage_5h_pct"] = int(m.group(1))
-            out["usage_5h_reset"] = m.group(2)
-        m = re.search(r"7d\s+(\d{1,3})%\s*↻(\d+h\d+m|\d+m)", text)
-        if m:
-            out["usage_7d_pct"] = int(m.group(1))
-            out["usage_7d_reset"] = m.group(2)
-        m = re.search(r"(auto[\w -]*mode|plan mode|accept edits)", text, re.I)
-        if m:
-            out["mode"] = m.group(1)
+        if not out.get("usage_5h_pct"):
+            m = re.search(r"5h\s+(\d{1,3})%\s*↻(\d+h\d+m|\d+m)", text)
+            if m:
+                out["usage_5h_pct"] = int(m.group(1))
+                out["usage_5h_reset"] = m.group(2)
+        if not out.get("usage_7d_pct"):
+            m = re.search(r"7d\s+(\d{1,3})%\s*↻(\d+h\d+m|\d+m)", text)
+            if m:
+                out["usage_7d_pct"] = int(m.group(1))
+                out["usage_7d_reset"] = m.group(2)
+        if not out.get("mode"):
+            m = re.search(r"(auto[\w -]*mode|plan mode|accept edits)", text, re.I)
+            if m:
+                out["mode"] = m.group(1)
         for ln in reversed(screen_lines):
             s = ln.strip()
             if s and not re.search(r"ctx|5h|7d|\$", s):
