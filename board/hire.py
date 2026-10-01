@@ -1,6 +1,7 @@
 """Agent Board hire implementation."""
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -50,7 +51,6 @@ from .worktrees import (
     YOLO_ARGS,
     yolo_args,
 )
-import board.core as _core
 def _hire_impl(kind: str, folder: str, name: str, message: str,
                workspace: str, workspace_label: str = "",
                use_worktree: bool = False, worktree_branch: str = "",
@@ -77,6 +77,7 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
         pane = _new_shell_pane(workspace, workspace_label, folder, name)
 
     start_args = yolo_args(kind) if yolo else []
+    start_args += persona_args(workspace_label or name, kind)
     # agent start fails with agent_pane_busy just after tab/pane creation.
     last_err = None
     for _ in range(20):
@@ -96,6 +97,7 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
             raise
     if last_err:
         raise last_err
+    import board.core as _core
     # Remember the requested name on the pane record: herdr may not report the
     # name in its snapshot (measured: codex start that was slow to register).
     with _core.STATE.lock:
@@ -121,6 +123,55 @@ def _hire_impl(kind: str, folder: str, name: str, message: str,
                     time.sleep(1.5)
                     continue
                 break
+
+
+def agent_name(label: str) -> str:
+    """herdr's agent-name rule: a lowercase letter first, then lowercase
+    letters/digits/-/_ up to 32. Tab labels are for people ("Blueprint
+    Composer"); this turns one into a valid name ("blueprint-composer")."""
+    n = re.sub(r"[^a-z0-9_-]+", "-", str(label or "").lower()).strip("-_")
+    n = re.sub(r"^[^a-z]+", "", n)[:32].rstrip("-_")
+    return n or "agent"
+
+
+# ---- personas: a role passed to the harness at start, stored per install ----
+PERSONA_FILE = Path.home() / ".claude" / "agent-board" / "personas.json"
+_persona_lock = __import__("threading").Lock()
+
+
+def personas() -> dict:
+    try:
+        return json.loads(PERSONA_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_persona(label: str, p: dict | None) -> None:
+    if not p:
+        return
+    with _persona_lock:
+        d = personas()
+        d[label] = p
+        PERSONA_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PERSONA_FILE.write_text(json.dumps(d, indent=1))
+
+
+def clean_persona(raw) -> dict | None:
+    """The persona as stored, or None. The prompt only ever travels as one
+    argv entry, never through a shell."""
+    if not isinstance(raw, dict):
+        return None
+    role = str(raw.get("role") or "").strip()[:40]
+    prompt = str(raw.get("prompt") or "").strip()[:2000]
+    p = {k: v for k, v in (("role", role), ("prompt", prompt)) if v}
+    return p or None
+
+
+def persona_args(label: str, kind: str) -> list[str]:
+    """Claude takes the role as --append-system-prompt; a resumed session does
+    not keep it, so every start passes it. Other harnesses have no equivalent."""
+    pr = (personas().get(label) or {}).get("prompt")
+    return ["--append-system-prompt", pr] if pr and kind == "claude" else []
 
 
 def _default_wt_branch(name: str) -> str:
@@ -335,6 +386,7 @@ def _rehire_impl(entry: dict) -> None:
 
 
 def _find_closed(key: str) -> dict | None:
+    import board.core as _core
     with _core.STATE.lock:
         for c in _core.STATE.closed:
             if c.get("pane") == key or c.get("name") == key:
@@ -402,4 +454,7 @@ def settings_public() -> dict:
         "docs_repo": cfg["docs_repo"],
         "machine_tokens": list(SESSIONS.machine_tokens.keys()),
         "adapters": capability_table(),
+        "personas": {k: {kk: vv for kk, vv in p.items() if kk != "prompt"}
+                     | {"has_prompt": bool(p.get("prompt"))}
+                     for k, p in personas().items()},
     }

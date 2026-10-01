@@ -26,7 +26,6 @@ from .herdr import (
     _extract_read_text,
 )
 from .workflow import _branch_ticket
-import board.core as _core
 def list_worktrees(include_occupied: bool = False) -> list[dict]:
     """Worktrees across agent repos and configured roots.
 
@@ -36,6 +35,7 @@ def list_worktrees(include_occupied: bool = False) -> list[dict]:
     `git worktree list` cannot. `include_occupied` returns every worktree,
     including ones an agent is inside (used to link an agent to its worktree).
     """
+    import board.core as _core
     roots = set()
     with _core.STATE.lock:
         for rec in _core.STATE.agents.values():

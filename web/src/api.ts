@@ -89,6 +89,15 @@ export const api = {
         shared_repo: boolean;
       }[];
     }>("/api/risk"),
+  personas: () =>
+    req<{
+      personas: Record<string, { role: string; has_prompt: boolean }>;
+    }>("/api/personas"),
+  setPersona: (label: string, persona: { role: string; prompt: string } | null) =>
+    req<{ ok: boolean }>("/api/persona", {
+      method: "POST",
+      body: JSON.stringify({ label, persona }),
+    }),
   prompt: (pane: string, text: string) =>
     req<{ ok: boolean }>("/api/prompt", {
       method: "POST",

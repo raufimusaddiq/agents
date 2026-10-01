@@ -130,6 +130,9 @@ function HireModal({
   const [useWorktree, setUseWorktree] = useState(false);
   const [worktreeBranch, setWorktreeBranch] = useState("");
   const [yolo, setYolo] = useState(false);
+  const [personaLabel, setPersonaLabel] = useState("");
+  const [personaPrompt, setPersonaPrompt] = useState("");
+  const [personas, setPersonas] = useState<Record<string, { role: string; has_prompt: boolean }>>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -144,6 +147,10 @@ function HireModal({
       .workspaces()
       .then((r) => setWorkspaces(r.workspaces))
       .catch(() => setWorkspaces([]));
+    api
+      .personas()
+      .then((r) => setPersonas(r.personas))
+      .catch(() => setPersonas({}));
   }, [opened, preset]);
 
   async function submit() {
@@ -151,6 +158,15 @@ function HireModal({
     setBusy(true);
     setError("");
     try {
+      // A role typed at hire time is saved so it can be reused next time.
+      if (personaPrompt.trim()) {
+        await api
+          .setPersona(workspaceLabel || name, {
+            role: personaPrompt.trim(),
+            prompt: personaPrompt.trim(),
+          })
+          .catch(() => undefined);
+      }
       await api.hire({
         kind,
         workspace,
@@ -231,6 +247,27 @@ function HireModal({
           value={message}
           onChange={(e) => setMessage(e.currentTarget.value)}
         />
+        <TextInput
+          label="Role (optional)"
+          description="A role prompt passed to Claude at start; saved per install."
+          placeholder="e.g. Strict code reviewer: flag every risk."
+          value={personaPrompt}
+          onChange={(e) => setPersonaPrompt(e.currentTarget.value)}
+          aria-label="persona prompt"
+        />
+        {Object.keys(personas).length > 0 && (
+          <Select
+            label="Or load a saved role"
+            data={Object.keys(personas).map((k) => ({ value: k, label: k }))}
+            value={personaLabel || null}
+            onChange={(v) => {
+              setPersonaLabel(v || "");
+              if (v && personas[v]?.role) setPersonaPrompt(personas[v].role);
+            }}
+            clearable
+            aria-label="saved role"
+          />
+        )}
         <div className="hire-opts">
           <label className="hire-opt">
             <input

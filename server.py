@@ -74,7 +74,7 @@ from board.notify import _last_page_seen, _page_lock, note_page_open, page_recen
 from board.terminal import _WS_TEXT, _WS_BINARY, _WS_CLOSE, _WS_PING, _WS_PONG, _WS_GUID, _ws_accept, _ws_send, _ws_recv, TerminalSession, serve_terminal
 from board.suggest import suggest, rank
 from board.worktrees import list_worktrees, _repos_from_herdr, _herdr_worktrees, _git_worktrees, _clean_branch, YOLO_ARGS, yolo_args
-from board.hire import _hire_impl, _default_wt_branch, create_agent_worktree, worktree_removal_blocker, remove_agent_worktree, _remove_worktree_by_path, _new_shell_pane, _workspace_mode, list_workspaces, _rehire_impl, _find_closed, list_folders, _has_dir, settings_public
+from board.hire import _hire_impl, _default_wt_branch, create_agent_worktree, worktree_removal_blocker, remove_agent_worktree, _remove_worktree_by_path, _new_shell_pane, _workspace_mode, list_workspaces, _rehire_impl, _find_closed, list_folders, _has_dir, settings_public, personas, save_persona, clean_persona, persona_args, agent_name
 
 def prompt_identity(ask: dict) -> dict:
     """Compare the question and choices, ignoring live cursor/screen changes."""
@@ -291,6 +291,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._deny()
             self._json(200, settings_public())
             return
+        if path == "/api/personas":
+            if not self._auth():
+                return self._deny()
+            self._json(200, {"personas": {
+                k: {kk: vv for kk, vv in v.items() if kk != "prompt"}
+                | {"has_prompt": bool(v.get("prompt"))}
+                for k, v in personas().items()}})
+            return
         if path == "/api/folders":
             if not self._auth():
                 return self._deny()
@@ -398,6 +406,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if path == "/api/rehire":
             self._rehire()
+            return
+        if path == "/api/persona":
+            body = self._read_json()
+            label = str(body.get("label", ""))[:40]
+            if not label:
+                self._json(400, {"error": "bad_label"})
+                return
+            p = clean_persona(body.get("persona"))
+            save_persona(label, p)  # p None clears it
+            audit("user", "persona", extra={"label": label, "set": bool(p)})
+            self._json(200, {"ok": True})
             return
         if path == "/api/dismiss":
             body = self._read_json()
