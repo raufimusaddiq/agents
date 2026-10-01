@@ -161,8 +161,13 @@ def reconcile_agents() -> None:
             pane = a.get("pane_id", "")
             if not valid_pane(pane):
                 continue
-            seen.add(pane)
             p = panes.get(pane, {})
+            # Measured: after a harness exits (or a herdr restart), the agent
+            # list can keep a ghost entry whose `agent` kind is None and which
+            # cannot be read. That is not a live agent; do not carry it.
+            if not a.get("agent"):
+                continue
+            seen.add(pane)
             sess = a.get("agent_session") or {}
             rec = STATE.agents.get(pane, {})
             rec.update({
@@ -174,6 +179,7 @@ def reconcile_agents() -> None:
                 "tab_id": a.get("tab_id", ""),
                 "workspace_id": a.get("workspace_id", ""),
                 "agent_status": a.get("agent_status", "unknown"),
+                "status_raw": a.get("agent_status", "unknown"),
                 "title": a.get("terminal_title_stripped", ""),
                 "focused": bool(a.get("focused")),
                 "interactive_ready": bool(a.get("interactive_ready")),
@@ -200,10 +206,13 @@ def reconcile_agents() -> None:
                 rec["session_id"] = _session_id_for(pane)
             rec.setdefault("col_since", now)
             STATE.agents[pane] = rec
-        # agents that vanished -> closed (rehirable)
+        # agents that vanished -> closed (rehirable). A record with no kind was
+        # never a recognized agent; drop it rather than offer it for rehire.
         for pane in list(STATE.agents):
             if pane not in seen:
                 rec = STATE.agents.pop(pane)
+                if not rec.get("kind"):
+                    continue
                 rec["closed_at"] = now
                 STATE.closed.append(rec)
         _prune_closed()
@@ -323,11 +332,39 @@ def read_screens() -> None:
                     "tabs": [], "context": "unparsed", "kind": "raw",
                     "raw": "\n".join(screen[-20:]),
                 }
+            # Measured: herdr reports `unknown` when it cannot classify the
+            # pane. Never show a blank: derive a status from what we do know,
+            # and keep herdr's raw value in status_raw so the reason is visible.
+            if r.get("agent_status") in (None, "", "unknown"):
+                r["agent_status"] = _derive_status(r, screen)
 
     for pane, name in pending_notifications:
         if notify(f"Needs you: {name}", "An agent is waiting for your input. Open the board to respond.", pane):
             with STATE.lock:
                 STATE.attention_notified.add(pane)
+
+
+def _derive_status(rec: dict, screen: list[str]) -> str:
+    """A status when herdr says `unknown`.
+
+    Order: a waiting prompt means `blocked`; recent transcript activity means
+    `working`; a visible idle input means `idle`; otherwise `done`. Uses only
+    observed signals, so it never invents activity.
+    """
+    if rec.get("needs_user") or rec.get("ask"):
+        return "blocked"
+    # A pane whose last transcript event is very recent is working.
+    last = rec.get("screen_updated_at") or rec.get("last_seen") or 0
+    tail = "\n".join(screen[-8:]).lower()
+    if any(k in tail for k in ("esc to interrupt", "esc to cancel",
+                               "working…", "running…", "thinking")):
+        return "working"
+    if any(k in tail for k in ("ask codex", "what can i help", "for shortcuts",
+                               "ctrl+p commands", "? for shortcuts")):
+        return "idle"
+    if time.time() - last < 20:
+        return "working"
+    return "done"
 
 
 # A screen that unmistakably waits for the user, even without parsed options.
@@ -556,6 +593,7 @@ def build_board() -> dict:
             "name": rec.get("name") or pane,
             "kind": rec.get("kind"),
             "agent_status": rec.get("agent_status", "unknown"),
+            "status_raw": rec.get("status_raw", "unknown"),
             "needs_user": bool(rec.get("needs_user")),
             "stage": stage,
             "last_line": _last_line(rec, evs),
@@ -627,6 +665,7 @@ def _compat_cards(tickets: list[dict]) -> list[dict]:
                 "branch": t.get("branch", ""), "ticket": t["name"],
                 "stations": [], "current_station": None, "status": {},
                 "agent_status": a["agent_status"], "needs_user": a["needs_user"],
+                "status_raw": a.get("status_raw", a["agent_status"]),
                 "ask": None, "last_line": a["last_line"],
                 "column": t["stage"], "time_in_column": 0, "unpushed": None,
                 "context_pct": a.get("context_pct"),

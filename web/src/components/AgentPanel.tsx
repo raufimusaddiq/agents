@@ -259,6 +259,88 @@ function Workflow({ agent, readOnly }: { agent: Agent; readOnly: boolean }) {
   );
 }
 
+/** What an agent asking to push would send: the commits and the full diff.
+ * The board never pushes; this is a review of what would go out. */
+function PushReview({ pane }: { pane: string }) {
+  const [info, setInfo] = useState<Awaited<
+    ReturnType<typeof api.pushinfo>
+  > | null>(null);
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api
+      .pushinfo(pane)
+      .then((r) => live && setInfo(r))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [pane]);
+  if (!info) return <p className="panel-empty">Loading…</p>;
+  if (!info.ok) {
+    return (
+      <p className="panel-empty">
+        {info.error || "Nothing to review."}
+      </p>
+    );
+  }
+  const n = info.commits.length;
+  return (
+    <div className="panel-stack">
+      <div className="branch-bar">
+        <span className="branch-name mono">
+          {info.branch}
+          {info.upstream ? ` → ${info.upstream}` : " (no upstream)"}
+        </span>
+        <span className="branch-badges">
+          <span className={n ? "park-chip is-warn" : "park-chip"}>
+            {n} commit{n === 1 ? "" : "s"} to send
+          </span>
+        </span>
+      </div>
+      {info.uncommitted > 0 && (
+        <p className="panel-note">
+          {info.uncommitted} uncommitted file
+          {info.uncommitted === 1 ? "" : "s"} would stay behind.
+        </p>
+      )}
+      {n === 0 && !info.uncommitted && (
+        <p className="panel-empty">Nothing to push. Working tree is clean.</p>
+      )}
+      <ul className="file-list">
+        {info.commits.map((c) => (
+          <li key={c.short} className="file-row">
+            <span className="file-path">
+              <span className="mono commit-sha">{c.short}</span> {c.subject}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {info.stat && <pre className="diff-body">{info.stat}</pre>}
+      {(info.diff || info.stat) && (
+        <div>
+          <button
+            type="button"
+            className="ab-btn board-mini"
+            aria-expanded={open}
+            onClick={() => setOpen((v) => !v)}
+          >
+            {open ? "Hide diff" : "Show full diff"}
+          </button>
+          {open && (
+            <ScrollArea h={320} mt="xs">
+              <pre className="diff-body">{info.diff || "(empty)"}</pre>
+            </ScrollArea>
+          )}
+        </div>
+      )}
+      {info.truncated && (
+        <p className="panel-note">Diff truncated for size.</p>
+      )}
+    </div>
+  );
+}
+
 function Safety({ agent }: { agent: Agent }) {
   const g = agent.git;
   const status = agent.status as Record<string, unknown>;
@@ -563,6 +645,7 @@ export function AgentPanel({
       <Tabs defaultValue="chat" className="panel-tabs">
         <Tabs.List>
           <Tabs.Tab value="chat">Chat</Tabs.Tab>
+          <Tabs.Tab value="push">Push</Tabs.Tab>
           <Tabs.Tab value="code">Code changes</Tabs.Tab>
           <Tabs.Tab value="workflow">Workflow</Tabs.Tab>
           <Tabs.Tab value="safety">Safety</Tabs.Tab>
@@ -590,6 +673,9 @@ export function AgentPanel({
           )}
         </Tabs.Panel>
 
+        <Tabs.Panel value="push" pt="sm">
+          <PushReview pane={agent.pane} />
+        </Tabs.Panel>
         <Tabs.Panel value="code" pt="sm">
           <CodeChanges agent={agent} />
         </Tabs.Panel>

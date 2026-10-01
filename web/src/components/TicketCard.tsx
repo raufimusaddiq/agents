@@ -19,7 +19,7 @@ export function statusLamp(status: string, needsUser: boolean) {
     case "done":
       return { cls: "is-idle", label: "standing by" };
     default:
-      return { cls: "is-unknown", label: "unknown" };
+      return { cls: "is-unknown", label: "status unknown" };
   }
 }
 

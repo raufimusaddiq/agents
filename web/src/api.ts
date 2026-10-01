@@ -42,6 +42,53 @@ export const api = {
         kind,
       )}&q=${encodeURIComponent(q)}`,
     ),
+  pushinfo: (pane: string) =>
+    req<{
+      ok: boolean;
+      error?: string;
+      repo: string;
+      branch: string;
+      upstream: string | null;
+      commits: { short: string; subject: string; author: string; when: string }[];
+      stat: string;
+      diff: string;
+      truncated: boolean;
+      uncommitted: number;
+    }>(`/api/pushinfo?pane=${encodeURIComponent(pane)}`),
+  digest: (since: number) =>
+    req<{
+      ok: boolean;
+      since: number;
+      agents: {
+        pane: string;
+        label: string;
+        status: string;
+        prompts: number;
+        replies: number;
+        tools: number;
+        last: string | null;
+        commits: string[];
+        cost: number | null;
+        asking: string | null;
+        needs_user: boolean;
+      }[];
+    }>(`/api/digest?since=${Math.round(since)}`),
+  risk: () =>
+    req<{
+      ok: boolean;
+      rows: {
+        pane: string;
+        label: string;
+        status: string;
+        repo: string | null;
+        branch: string;
+        files: number;
+        unpushed: number | null;
+        upstream: string | null;
+        ctx: number | null;
+        shared_repo: boolean;
+      }[];
+    }>("/api/risk"),
   prompt: (pane: string, text: string) =>
     req<{ ok: boolean }>("/api/prompt", {
       method: "POST",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Modal, ScrollArea, Select, Stack, TextInput } from "@mantine/core";
 import type { Board, FolderListing, Worktree } from "../types";
 import { api } from "../api";
@@ -291,6 +291,84 @@ function HireModal({
   );
 }
 
+/** While you were away: after a while off the page, a per-agent digest of what
+ * changed. Anything waiting on the user goes first. Collapsed to one line. */
+function DigestStrip() {
+  const [rows, setRows] = useState<
+    Awaited<ReturnType<typeof api.digest>>["agents"] | null
+  >(null);
+  const [open, setOpen] = useState(false);
+  const away = useRef(Date.now());
+  useEffect(() => {
+    const onVis = async () => {
+      if (document.visibilityState !== "visible") {
+        away.current = Date.now();
+        return;
+      }
+      // Only bother after a real absence.
+      if (Date.now() - away.current < 30 * 60 * 1000) return;
+      try {
+        const r = await api.digest(away.current / 1000);
+        const changed = r.agents.filter(
+          (a) => a.prompts || a.replies || a.commits.length || a.needs_user,
+        );
+        if (changed.length) setRows(changed);
+      } catch {
+        /* ignore */
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, []);
+  if (!rows || rows.length === 0) return null;
+  const waiting = rows.filter((r) => r.needs_user).length;
+  return (
+    <section
+      className="ab-panel board-digest"
+      aria-label="while you were away"
+    >
+      <button
+        type="button"
+        className="board-digest-head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="board-digest-label">
+          While you were away
+          <span className="board-digest-note">
+            {" "}
+            {rows.length} agent{rows.length === 1 ? "" : "s"}
+            {waiting ? `, ${waiting} waiting on you` : ""}
+          </span>
+        </span>
+        <span className="board-closed-caret" aria-hidden>
+          {open ? "▾" : "▸"}
+        </span>
+      </button>
+      {open && (
+        <ul className="board-digest-list">
+          {rows.map((r) => (
+            <li key={r.pane} className={r.needs_user ? "is-needs" : ""}>
+              <span className="font-display">{r.label}</span>
+              <span className="board-digest-stats">
+                {r.prompts} prompts · {r.replies} replies · {r.tools} tools
+                {r.commits.length ? ` · ${r.commits.length} commits` : ""}
+                {r.cost ? ` · $${r.cost.toFixed(2)}` : ""}
+              </span>
+              {r.asking && (
+                <span className="board-digest-ask">waiting: {r.asking}</span>
+              )}
+              {r.last && !r.asking && (
+                <span className="board-digest-last">{r.last}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function WorktreeCards({
   worktrees,
   onRehire,
@@ -570,6 +648,8 @@ export function BoardView({
           ))}
         </section>
       )}
+
+      <DigestStrip />
 
       {board.closed.length > 0 && (
         <section className="ab-panel board-closed" aria-label="closed agents">
